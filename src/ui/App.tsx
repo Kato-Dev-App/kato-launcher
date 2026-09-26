@@ -106,6 +106,14 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
 
+  const displayVersion = useMemo(() => {
+    const v = `v${LAUNCHER_CONFIG.version}`;
+    if (!LAUNCHER_CONFIG.tag || v.toLowerCase().includes(LAUNCHER_CONFIG.tag.toLowerCase())) {
+      return v;
+    }
+    return `${v} ${LAUNCHER_CONFIG.tag}`;
+  }, []);
+
   useEffect(() => {
     launcherRepository
       .load()
@@ -818,9 +826,9 @@ export default function App() {
                 <div className="settings-row">
                   <div>
                     <div className="settings-row-title">{t("settings.version")}</div>
-                    <div className="settings-row-desc">{LAUNCHER_CONFIG.name} v{LAUNCHER_CONFIG.version} {LAUNCHER_CONFIG.tag}</div>
+                    <div className="settings-row-desc">{LAUNCHER_CONFIG.name} {displayVersion}</div>
                   </div>
-                  <span className="settings-badge">v{LAUNCHER_CONFIG.version}</span>
+                  <span className="settings-badge">{displayVersion}</span>
                 </div>
                 <div className="settings-row">
                   <div>
@@ -892,7 +900,7 @@ export default function App() {
 
         <footer className="page-footer">
           <span>
-            {LAUNCHER_CONFIG.titlePrefix} {LAUNCHER_CONFIG.titleSuffix} <b>·</b> v{LAUNCHER_CONFIG.version} {LAUNCHER_CONFIG.tag}
+            {LAUNCHER_CONFIG.titlePrefix} {LAUNCHER_CONFIG.titleSuffix} <b>·</b> {displayVersion}
           </span>
           <span
             style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}
