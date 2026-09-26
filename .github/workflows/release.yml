@@ -4,10 +4,7 @@ on:
   push:
     tags:
       - 'v*'
-      - '*.*.*'
-      - '[0-9]+.*'
-  release:
-    types: [published]
+      - '[0-9]*'
   workflow_dispatch:
 
 jobs:
@@ -65,8 +62,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.event.release.tag_name || (github.ref_type == 'tag' && github.ref_name) || 'v__VERSION__' }}
-          releaseName: 'Kato-Dev ${{ github.event.release.tag_name || (github.ref_type == 'tag' && github.ref_name) || 'v__VERSION__' }}'
+          tagName: v__VERSION__
+          releaseName: 'Kato-Dev v__VERSION__'
           releaseBody: 'Instaladores oficiales de Kato-Dev Launcher para Windows, macOS y Linux.'
           releaseDraft: false
           prerelease: true

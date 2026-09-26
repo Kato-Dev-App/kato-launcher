@@ -1,6 +1,6 @@
 [package]
 name = "kato-launcher"
-version = "0.1.0"
+version = "0.1.0-alpha"
 description = "KatoLauncher desktop application"
 authors = ["KatoDev"]
 edition = "2021"
