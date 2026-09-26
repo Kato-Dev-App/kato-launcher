@@ -80,6 +80,11 @@ async fn launch_instance(app: tauri::AppHandle, instance_id: String) -> Result<S
     let mut cmd = std::process::Command::new(&prep.java_binary);
     #[cfg(target_os = "macos")]
     {
+        // Limpiar variables DYLD heredadas de Tauri/Cargo que desbordan el buffer snprintf de JNA en Minecraft 1.17 - 1.20.1
+        cmd.env_remove("DYLD_FALLBACK_LIBRARY_PATH");
+        cmd.env_remove("DYLD_LIBRARY_PATH");
+        cmd.env_remove("DYLD_FRAMEWORK_PATH");
+
         if prep.is_lwjgl3 {
             cmd.arg("-XstartOnFirstThread");
         }
@@ -115,12 +120,36 @@ async fn launch_instance(app: tauri::AppHandle, instance_id: String) -> Result<S
 
     cmd.current_dir(&instance_dir);
 
-    cmd.spawn()
+    // Redirigir la salida y errores de Minecraft a launcher_game.log dentro de la carpeta de la instancia
+    let log_path = instance_dir.join("launcher_game.log");
+    let log_file = std::fs::File::create(&log_path)
+        .map_err(|e| format!("No se pudo inicializar archivo de registro del juego: {e}"))?;
+    let log_err = log_file.try_clone()
+        .map_err(|e| format!("No se pudo duplicar handle de registro: {e}"))?;
+
+    cmd.stdout(std::process::Stdio::from(log_file));
+    cmd.stderr(std::process::Stdio::from(log_err));
+
+    let mut child = cmd.spawn()
         .map_err(|e| format!("No se pudo iniciar el proceso de Minecraft con Java ('{}'): {e}", prep.java_binary))?;
 
+    // Esperar un momento breve para comprobar si el proceso finalizó de inmediato por algún error de Java/librerías
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    if let Ok(Some(status)) = child.try_wait() {
+        if !status.success() {
+            let log_text = std::fs::read_to_string(&log_path).unwrap_or_default();
+            let last_lines: Vec<&str> = log_text.lines().rev().take(12).collect();
+            let mut summary = last_lines.into_iter().rev().collect::<Vec<&str>>().join("\n");
+            if summary.trim().is_empty() {
+                summary = format!("Código de salida del proceso: {status}");
+            }
+            return Err(format!("Minecraft se cerró inmediatamente con error:\n{summary}"));
+        }
+    }
+
     Ok(format!(
-        "¡Minecraft {} ({}) lanzado exitosamente con Java {} y el jugador '{}'! La ventana del juego se está abriendo.",
-        instance.minecraft_version, prep.loader_name, prep.java_major, profile_name
+        "¡Minecraft {} ({}) iniciado correctamente con Java {}! La ventana del juego se abrirá en breve.",
+        instance.minecraft_version, prep.loader_name, prep.java_major
     ))
 }
 

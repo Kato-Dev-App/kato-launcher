@@ -151,15 +151,40 @@ struct FabricLibrary {
     url: Option<String>,
 }
 
-fn is_library_allowed(rules: &Option<Vec<Rule>>) -> bool {
+fn is_library_allowed(rules: &Option<Vec<Rule>>, lib_name: Option<&str>) -> bool {
+    let is_macos = cfg!(target_os = "macos");
+    let is_arm64 = cfg!(target_arch = "aarch64");
+
+    if let Some(name) = lib_name {
+        if is_macos {
+            if is_arm64 && name.ends_with(":natives-macos") {
+                return false;
+            } else if !is_arm64 && name.ends_with(":natives-macos-arm64") {
+                return false;
+            }
+        }
+        if cfg!(target_os = "windows") {
+            if is_arm64 && (name.ends_with(":natives-windows") || name.ends_with(":natives-windows-x86")) {
+                return false;
+            } else if !is_arm64 && name.ends_with(":natives-windows-arm64") {
+                return false;
+            }
+        }
+        if cfg!(target_os = "linux") {
+            if is_arm64 && name.ends_with(":natives-linux") {
+                return false;
+            } else if !is_arm64 && name.ends_with(":natives-linux-arm64") {
+                return false;
+            }
+        }
+    }
+
     let rules = match rules {
         Some(r) => r,
         None => return true,
     };
 
     let mut allowed = false;
-    let is_macos = cfg!(target_os = "macos");
-    let is_arm64 = cfg!(target_arch = "aarch64");
 
     for rule in rules {
         let action_allow = rule.action == "allow";
@@ -303,14 +328,21 @@ pub fn scan_system_javas() -> Vec<JavaEnvironment> {
         add_candidate(bin_java, "JAVA_HOME".to_string());
     }
 
-    // 2. macOS: /Library/Java y Homebrew
+    // 2. macOS: /Library/Java, ~/Library/Java y Homebrew
     #[cfg(target_os = "macos")]
     {
-        if let Ok(entries) = std::fs::read_dir("/Library/Java/JavaVirtualMachines") {
-            for entry in entries.flatten() {
-                let p = entry.path().join("Contents/Home/bin/java");
-                let dir_name = entry.file_name().to_string_lossy().to_string();
-                add_candidate(p, dir_name);
+        let mut jvm_roots = vec![PathBuf::from("/Library/Java/JavaVirtualMachines")];
+        if let Ok(home) = std::env::var("HOME") {
+            jvm_roots.push(PathBuf::from(home).join("Library/Java/JavaVirtualMachines"));
+        }
+
+        for root in jvm_roots {
+            if let Ok(entries) = std::fs::read_dir(&root) {
+                for entry in entries.flatten() {
+                    let p = entry.path().join("Contents/Home/bin/java");
+                    let dir_name = entry.file_name().to_string_lossy().to_string();
+                    add_candidate(p, dir_name);
+                }
             }
         }
 
@@ -332,12 +364,18 @@ pub fn scan_system_javas() -> Vec<JavaEnvironment> {
     // 3. Linux: /usr/lib/jvm y /usr/bin/java
     #[cfg(target_os = "linux")]
     {
-        let jvm_dir = Path::new("/usr/lib/jvm");
-        if let Ok(entries) = std::fs::read_dir(jvm_dir) {
-            for entry in entries.flatten() {
-                let bin_java = entry.path().join("bin").join("java");
-                let name = entry.file_name().to_string_lossy().to_string();
-                add_candidate(bin_java, name);
+        let mut jvm_dirs = vec![PathBuf::from("/usr/lib/jvm")];
+        if let Ok(home) = std::env::var("HOME") {
+            jvm_dirs.push(PathBuf::from(home).join(".jdks"));
+        }
+
+        for jvm_dir in jvm_dirs {
+            if let Ok(entries) = std::fs::read_dir(jvm_dir) {
+                for entry in entries.flatten() {
+                    let bin_java = entry.path().join("bin").join("java");
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    add_candidate(bin_java, name);
+                }
             }
         }
         add_candidate(PathBuf::from("/usr/bin/java"), "Linux OpenJDK (/usr/bin/java)".to_string());
@@ -413,10 +451,16 @@ pub fn select_best_java(required_major: u32, mc_version: &str) -> Result<String,
         if let Some(j21) = javas.iter().find(|j| j.major_version == 21) {
             return Ok(j21.path.clone());
         }
+        if let Some(newer) = javas.iter().find(|j| j.major_version >= 17) {
+            return Ok(newer.path.clone());
+        }
     }
 
-    // 3. Si se requiere Java 21 o superior, buscar la versión más compatible disponible
+    // 3. Si se requiere Java 21 o superior, preferir Java 21 LTS primero
     if required_major >= 21 {
+        if let Some(j21) = javas.iter().find(|j| j.major_version == 21) {
+            return Ok(j21.path.clone());
+        }
         if let Some(newer) = javas.iter().find(|j| j.major_version >= 21) {
             return Ok(newer.path.clone());
         }
@@ -635,12 +679,15 @@ fn load_custom_version_json(
 
     if let Some(libs_arr) = parsed.get("libraries").and_then(|l| l.as_array()) {
         for lib_val in libs_arr {
+            let name = lib_val.get("name").and_then(|n| n.as_str());
             if let Some(rules_val) = lib_val.get("rules") {
                 if let Ok(rules) = serde_json::from_value::<Vec<Rule>>(rules_val.clone()) {
-                    if !is_library_allowed(&Some(rules)) {
+                    if !is_library_allowed(&Some(rules), name) {
                         continue;
                     }
                 }
+            } else if !is_library_allowed(&None, name) {
+                continue;
             }
 
             let name = lib_val.get("name").and_then(|n| n.as_str()).unwrap_or("");
@@ -856,7 +903,7 @@ pub async fn prepare_and_download_all(
 
     if let Some(libraries) = package_data.libraries {
         for lib in libraries {
-            if !is_library_allowed(&lib.rules) {
+            if !is_library_allowed(&lib.rules, lib.name.as_deref()) {
                 continue;
             }
             if let Some(downloads) = lib.downloads {
