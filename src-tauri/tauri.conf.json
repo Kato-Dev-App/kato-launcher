@@ -12,16 +12,18 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Kato-Dev",
         "width": 1100,
         "height": 640,
         "resizable": false,
         "maximizable": false,
-        "center": true
+        "center": true,
+        "visible": true
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' asset: data:; connect-src ipc: http://ipc.localhost https://piston-meta.mojang.com"
+      "csp": null
     }
   },
   "bundle": {
