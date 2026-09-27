@@ -1,10 +1,6 @@
 # Kato Launcher (KatoApp)
 
 <p align="center">
-  <img src="public/options/perfil.jpg" alt="Kato Launcher Banner" width="120" style="border-radius: 16px;" />
-</p>
-
-<p align="center">
   <strong>Launcher ligero, moderno y modular para Minecraft con soporte para múltiples versiones, modloaders y gestión de contenido Modrinth.</strong>
 </p>
 
