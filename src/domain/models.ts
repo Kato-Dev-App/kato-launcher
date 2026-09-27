@@ -1,6 +1,16 @@
 export type Loader = "Vanilla" | "Fabric" | "Forge" | "NeoForge";
 
-export type AvatarVariant = "steve" | "alex" | "creeper" | "ender" | "diamond" | "netherite";
+export type AvatarVariant =
+  | "creeper"
+  | "zombie"
+  | "enderman"
+  | "esqueleto"
+  | "cerdo"
+  | "vaca"
+  | "pollo"
+  | "steve"
+  | "alex"
+  | string;
 
 export interface JavaEnvironment {
   path: string;
@@ -14,6 +24,7 @@ export interface OfflineProfile {
   id: string;
   name: string;
   avatar?: AvatarVariant;
+  skinVariant?: string;
   createdAt?: string;
 }
 

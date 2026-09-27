@@ -1,11 +1,12 @@
 {
-  "name": "Kato-Dev",
-  "titlePrefix": "KATO",
-  "titleSuffix": "-DEV",
-  "version": "0.1.1-alpha",
+  "name": "KatoApp",
+  "titlePrefix": "Kato",
+  "titleSuffix": "Launcher",
+  "version": "0.1.2-alpha",
   "tag": "ALPHA",
   "description": "Launcher ligero y modular para Minecraft con soporte de modloaders y perfiles locales.",
   "website": "https://www.youtube.com/@katolabs-dev",
   "tauriVersion": "2.8",
-  "maxInstances": 3
+  "maxInstances": 3,
+  "maxProfiles": 4
 }

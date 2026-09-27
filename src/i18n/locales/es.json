@@ -49,7 +49,13 @@
     "inUse": "Perfil en uso",
     "useThis": "Usar este perfil",
     "instancesCount": "Instancias vinculadas:",
-    "noInstancesHint": "Sin instancias creadas para este perfil"
+    "noInstancesHint": "Sin instancias creadas para este perfil",
+    "whoIsPlaying": "¿Quién va a jugar?",
+    "whoIsPlayingDesc": "Selecciona tu perfil para acceder a tus instancias o añade uno nuevo.",
+    "enterProfile": "Entrar",
+    "exitProfile": "Salir del perfil",
+    "switchProfile": "Cambiar perfil",
+    "limitReached": "Límite alcanzado"
   },
   "profileModal": {
     "title": "Crear Perfil Offline",
@@ -72,6 +78,8 @@
     "version": "Versión",
     "instanceLimit": "Límite de Instancias",
     "instanceLimitDesc": "Máximo de 3 instancias independientes permitidas",
+    "profileLimit": "Límite de Perfiles",
+    "profileLimitDesc": "Máximo de perfiles de jugador permitidos",
     "backend": "Backend Desktop",
     "localStorage": "Almacenamiento Local",
     "localStorageDesc": "Instancias aisladas en directorio /instances/",
@@ -92,15 +100,18 @@
     "official": "oficiales",
     "synchronized": "Sincronizado",
     "refreshCatalog": "Actualizar catálogo",
-    "synchronizing": "Sincronizando…"
+    "synchronizing": "Sincronizando…",
+    "disclaimerTitle": "Descargo de responsabilidad"
   },
   "footer": {
-    "tagline": "Los datos de tu biblioteca y perfiles permanecen en este dispositivo."
+    "tagline": "Los datos de tu biblioteca y perfiles permanecen en este dispositivo.",
+    "mojangDisclaimer": "No es un producto oficial de Minecraft. Sin relación ni afiliación con Mojang o Microsoft."
   },
   "messages": {
     "openingFolder": "Abriendo carpeta de \"{name}\" en Finder…",
     "launching": "Preparando carpeta y descargando archivos de Minecraft {version}…",
     "instanceLimitReached": "Has alcanzado el límite máximo de {max} instancias. Elimina una instancia para crear otra.",
+    "profileLimitReached": "Has alcanzado el límite máximo de {max} perfiles. Elimina un perfil para crear otro.",
     "needProfileFirst": "Primero debes crear un perfil para poder configurar una instancia.",
     "confirmDeleteInstanceTitle": "¿Eliminar instancia \"{name}\"?",
     "confirmDeleteInstanceDesc": "Esta acción eliminará físicamente la carpeta de la instancia con todos sus mods, mundos y configuraciones de forma irreversible.",

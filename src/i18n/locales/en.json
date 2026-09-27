@@ -49,7 +49,13 @@
     "inUse": "Profile in use",
     "useThis": "Use this profile",
     "instancesCount": "Linked instances:",
-    "noInstancesHint": "No instances created for this profile"
+    "noInstancesHint": "No instances created for this profile",
+    "whoIsPlaying": "Who is playing?",
+    "whoIsPlayingDesc": "Select your profile to access your instances or create a new one.",
+    "enterProfile": "Enter",
+    "exitProfile": "Exit profile",
+    "switchProfile": "Switch profile",
+    "limitReached": "Limit reached"
   },
   "profileModal": {
     "title": "Create Offline Profile",
@@ -72,6 +78,8 @@
     "version": "Version",
     "instanceLimit": "Instance Limit",
     "instanceLimitDesc": "Maximum of 3 independent instances allowed",
+    "profileLimit": "Profile Limit",
+    "profileLimitDesc": "Maximum player profiles allowed",
     "backend": "Desktop Backend",
     "localStorage": "Local Storage",
     "localStorageDesc": "Isolated instances stored in /instances/ directory",
@@ -80,7 +88,7 @@
     "javaDesc": "KatoLauncher automatically detects and selects the exact Java version required by the chosen Minecraft era.",
     "detectedJava": "Java detected on your system",
     "recommended": "Default (Java 21)",
-    "detectingJava": "Detecting Java installations…",
+    "detectingJava": "Detectando instalaciones de Java…",
     "compatibilityTitle": "Version compatibility rules",
     "ruleJava21": "Minecraft 1.20.5 to 1.21+: Requires Java 21 (Ready with Temurin 21)",
     "ruleJava17": "Minecraft 1.17 to 1.20.4: Requires Java 17 (Runs automatically with Java 21)",
@@ -92,15 +100,18 @@
     "official": "official",
     "synchronized": "Synchronized",
     "refreshCatalog": "Update catalog",
-    "synchronizing": "Synchronizing…"
+    "synchronizing": "Synchronizing…",
+    "disclaimerTitle": "Disclaimer"
   },
   "footer": {
-    "tagline": "Your library and profile data remain on this device."
+    "tagline": "Your library and profile data remain on this device.",
+    "mojangDisclaimer": "Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft."
   },
   "messages": {
     "openingFolder": "Opening folder of \"{name}\" in Finder…",
     "launching": "Preparing folder and downloading Minecraft {version} files…",
     "instanceLimitReached": "You have reached the maximum limit of {max} instances. Delete an instance to create another.",
+    "profileLimitReached": "You have reached the maximum limit of {max} profiles. Delete a profile to create another.",
     "needProfileFirst": "You must create a profile before configuring an instance.",
     "confirmDeleteInstanceTitle": "Delete instance \"{name}\"?",
     "confirmDeleteInstanceDesc": "This action will permanently delete the instance folder with all its mods, worlds, and settings.",

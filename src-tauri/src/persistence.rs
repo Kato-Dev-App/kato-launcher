@@ -33,6 +33,8 @@ pub struct OfflineProfile {
     #[serde(default)]
     pub created_at: Option<String>,
     #[serde(default)]
+    pub avatar: Option<String>,
+    #[serde(default)]
     pub skin_variant: Option<String>,
 }
 

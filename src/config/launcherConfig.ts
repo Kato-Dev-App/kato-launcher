@@ -10,6 +10,7 @@ export interface LauncherConfig {
   website: string;
   tauriVersion: string;
   maxInstances: number;
+  maxProfiles: number;
 }
 
 /**

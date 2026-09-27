@@ -8,9 +8,9 @@ export const LOCALES: Record<Language, typeof es> = {
   en,
 };
 
-export const AVAILABLE_LANGUAGES: { code: Language; label: string; flag: string }[] = [
-  { code: "es", label: "Español", flag: "🇪🇸" },
-  { code: "en", label: "English", flag: "🇺🇸" },
+export const AVAILABLE_LANGUAGES: { code: Language; label: string; short: string }[] = [
+  { code: "es", label: "Español", short: "ES" },
+  { code: "en", label: "English", short: "EN" },
 ];
 
 /**

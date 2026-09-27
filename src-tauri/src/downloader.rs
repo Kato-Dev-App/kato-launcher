@@ -628,10 +628,58 @@ fn extract_args_from_json(val: Option<&serde_json::Value>) -> Vec<String> {
     result
 }
 
+fn replace_arg_placeholders(
+    arg: &str,
+    instance_dir: &Path,
+    app_data: &Path,
+    mc_version: &str,
+) -> String {
+    let lib_dir = if instance_dir.join("libraries").exists() {
+        instance_dir.join("libraries")
+    } else {
+        app_data.join("libraries")
+    };
+    let cp_sep = if cfg!(target_os = "windows") { ";" } else { ":" };
+    let natives_dir = instance_dir.join("bin");
+    let launcher_cfg = get_launcher_config();
+
+    arg.replace("${library_directory}", &lib_dir.to_string_lossy())
+        .replace("${classpath_separator}", cp_sep)
+        .replace("${natives_directory}", &natives_dir.to_string_lossy())
+        .replace("${game_directory}", &instance_dir.to_string_lossy())
+        .replace("${assets_root}", &app_data.join("assets").to_string_lossy())
+        .replace("${launcher_name}", &launcher_cfg.name)
+        .replace("${launcher_version}", &launcher_cfg.version)
+        .replace("${version_name}", mc_version)
+}
+
+fn sync_shared_libraries_to_instance(app_libs: &Path, inst_libs: &Path) {
+    if !app_libs.exists() || !inst_libs.exists() {
+        return;
+    }
+    fn walk_and_link(src_dir: &Path, dst_dir: &Path) {
+        let Ok(entries) = std::fs::read_dir(src_dir) else { return; };
+        for entry in entries.flatten() {
+            let src_path = entry.path();
+            let dst_path = dst_dir.join(entry.file_name());
+            if src_path.is_dir() {
+                let _ = std::fs::create_dir_all(&dst_path);
+                walk_and_link(&src_path, &dst_path);
+            } else if src_path.is_file() && !dst_path.exists() {
+                if std::fs::hard_link(&src_path, &dst_path).is_err() {
+                    let _ = std::fs::copy(&src_path, &dst_path);
+                }
+            }
+        }
+    }
+    walk_and_link(app_libs, inst_libs);
+}
+
 fn load_custom_version_json(
     loader_filter: &str,
     instance_dir: &Path,
     app_data: &Path,
+    mc_version: &str,
     lib_map: &mut LibraryMap,
     main_class: &mut String,
     extra_jvm_args: &mut Vec<String>,
@@ -673,8 +721,12 @@ fn load_custom_version_json(
     }
 
     if let Some(args_obj) = parsed.get("arguments").and_then(|a| a.as_object()) {
-        extra_jvm_args.extend(extract_args_from_json(args_obj.get("jvm")));
-        extra_game_args.extend(extract_args_from_json(args_obj.get("game")));
+        for arg in extract_args_from_json(args_obj.get("jvm")) {
+            extra_jvm_args.push(replace_arg_placeholders(&arg, instance_dir, app_data, mc_version));
+        }
+        for arg in extract_args_from_json(args_obj.get("game")) {
+            extra_game_args.push(replace_arg_placeholders(&arg, instance_dir, app_data, mc_version));
+        }
     }
 
     if let Some(libs_arr) = parsed.get("libraries").and_then(|l| l.as_array()) {
@@ -1110,10 +1162,12 @@ pub async fn prepare_and_download_all(
             }
 
             // Cargar configuración exacta generada por Forge (mainClass, librerías sin duplicados y argumentos)
+            sync_shared_libraries_to_instance(&app_data.join("libraries"), &instance_dir.join("libraries"));
             load_custom_version_json(
                 "forge",
                 instance_dir,
                 app_data,
+                mc_version,
                 &mut lib_map,
                 &mut main_class,
                 &mut extra_jvm_args,
@@ -1213,10 +1267,12 @@ pub async fn prepare_and_download_all(
                 let _ = std::fs::write(&marker, b"installed");
             }
 
+            sync_shared_libraries_to_instance(&app_data.join("libraries"), &instance_dir.join("libraries"));
             load_custom_version_json(
                 "neoforge",
                 instance_dir,
                 app_data,
+                mc_version,
                 &mut lib_map,
                 &mut main_class,
                 &mut extra_jvm_args,
@@ -1224,6 +1280,10 @@ pub async fn prepare_and_download_all(
             );
 
             extra_jvm_args.push("-Dneoforge.earlydisplay=false".to_string());
+            let lib_dir = instance_dir.join("libraries");
+            if !extra_jvm_args.iter().any(|a| a.starts_with("-DlibraryDirectory=")) {
+                extra_jvm_args.push(format!("-DlibraryDirectory={}", lib_dir.to_string_lossy()));
+            }
         }
 
         _ => {

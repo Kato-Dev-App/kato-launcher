@@ -2,34 +2,27 @@ import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   Box,
-  Calendar,
   Check,
   CircleAlert,
   CircleHelp,
   CloudDownload,
   ExternalLink,
-  FolderMinus,
   FolderOpen,
-  FolderPlus,
   Gamepad2,
+  Globe,
   HardDrive,
-  Info,
-  Languages,
   LayoutGrid,
-  MoreHorizontal,
+  LogOut,
   Play,
   Plus,
   RefreshCw,
   Search,
   Settings2,
   Sparkles,
-  Terminal,
   Trash2,
   UserCheck,
   UserPlus,
   UserRound,
-  Users,
-  WifiOff,
 } from "lucide-react";
 import {
   EMPTY_STATE,
@@ -48,18 +41,37 @@ import { launcherRepository } from "../services/launcherRepository";
 import { LAUNCHER_CONFIG } from "../config/launcherConfig";
 import { AVAILABLE_LANGUAGES, getTranslation, type Language } from "../i18n";
 
-type Tab = "instances" | "profiles" | "settings";
+type Tab = "instances" | "settings";
 
 const MAX_INSTANCES = LAUNCHER_CONFIG.maxInstances;
+const MAX_PROFILES = LAUNCHER_CONFIG.maxProfiles ?? 4;
 
-const avatarPresets: { id: AvatarVariant; label: string; preview: string }[] = [
-  { id: "steve", label: "Steve", preview: "S" },
-  { id: "alex", label: "Alex", preview: "A" },
-  { id: "creeper", label: "Creeper", preview: "C" },
-  { id: "ender", label: "Ender", preview: "E" },
-  { id: "diamond", label: "Diamante", preview: "D" },
-  { id: "netherite", label: "Netherite", preview: "N" },
+interface AvatarPreset {
+  id: AvatarVariant;
+  label: string;
+  preview: string;
+  image: string;
+}
+
+const avatarPresets: AvatarPreset[] = [
+  { id: "creeper", label: "Creeper", preview: "Cr", image: "/avatars/creeper.jpg" },
+  { id: "zombie", label: "Zombie", preview: "Zo", image: "/avatars/zombie.jpg" },
+  { id: "enderman", label: "Enderman", preview: "En", image: "/avatars/enderman.png" },
+  { id: "esqueleto", label: "Esqueleto", preview: "Es", image: "/avatars/esqueleto.jpg" },
+  { id: "cerdo", label: "Cerdo", preview: "Ce", image: "/avatars/cerdo.jpg" },
+  { id: "vaca", label: "Vaca", preview: "Va", image: "/avatars/vaca.jpg" },
+  { id: "pollo", label: "Pollo", preview: "Po", image: "/avatars/pollo.jpg" },
 ];
+
+const getAvatarImage = (variant?: string) => {
+  const key = variant || "creeper";
+  const found = avatarPresets.find((p) => p.id === key);
+  if (found) return found.image;
+  if (key === "ender" || key === "enderman") return "/avatars/enderman.png";
+  if (key === "steve") return "/avatars/steve.png";
+  if (key === "alex") return "/avatars/alex.png";
+  return `/avatars/${key}.jpg`;
+};
 
 const newId = () => crypto.randomUUID();
 
@@ -74,6 +86,7 @@ interface ConfirmState {
 export default function App() {
   const [state, setState] = useState<LauncherState>(EMPTY_STATE);
   const [ready, setReady] = useState(false);
+  const [isInsideProfile, setIsInsideProfile] = useState(false);
   const [tab, setTab] = useState<Tab>("instances");
 
   const currentLang: Language = (state.language as Language) || "es";
@@ -97,7 +110,7 @@ export default function App() {
   const [profileFilter, setProfileFilter] = useState("");
   const [profileDialog, setProfileDialog] = useState(false);
   const [newProfileName, setNewProfileName] = useState("");
-  const [newProfileAvatar, setNewProfileAvatar] = useState<AvatarVariant>("steve");
+  const [newProfileAvatar, setNewProfileAvatar] = useState<AvatarVariant>("creeper");
 
   // Confirmation Modal state (reemplaza a window.confirm que se bloquea en webviews)
   const [confirmModal, setConfirmModal] = useState<ConfirmState | null>(null);
@@ -124,15 +137,28 @@ export default function App() {
           const exists = loaded.profiles.some((p) => p.id === loaded.activeProfileId);
           if (!loaded.activeProfileId || !exists) {
             nextState = { ...loaded, activeProfileId: loaded.profiles[0].id };
-            launcherRepository.save(nextState).catch(console.error);
           }
         }
+
+        // Migrate any profiles created before avatar persistence
+        let profilesChanged = false;
+        const normalizedProfiles = (nextState.profiles || []).map((p) => {
+          if (!p.avatar) {
+            profilesChanged = true;
+            return { ...p, avatar: "creeper" as AvatarVariant };
+          }
+          return p;
+        });
+
+        if (profilesChanged || nextState.activeProfileId !== loaded.activeProfileId) {
+          nextState = { ...nextState, profiles: normalizedProfiles };
+          launcherRepository.save(nextState).catch(console.error);
+        }
+
         setState(nextState);
 
-        // Si es la primera vez (no hay perfiles), abrir diálogo para crearse uno
         if (nextState.profiles.length === 0) {
-          setTab("profiles");
-          setProfileDialog(true);
+          setIsInsideProfile(false);
         }
 
         // Si es la primera vez y no hay catálogo de versiones en caché, buscarlo automáticamente de Mojang
@@ -164,7 +190,8 @@ export default function App() {
   };
 
   const activeProfile = useMemo(() => {
-    return state.profiles.find((p) => p.id === state.activeProfileId) ?? state.profiles[0];
+    if (state.profiles.length === 0) return null;
+    return state.profiles.find((p) => p.id === state.activeProfileId) ?? state.profiles[0] ?? null;
   }, [state.profiles, state.activeProfileId]);
 
   const shownInstances = useMemo(() => {
@@ -186,6 +213,7 @@ export default function App() {
   };
 
   const isInstanceLimitReached = state.instances.length >= MAX_INSTANCES;
+  const isProfileLimitReached = state.profiles.length >= MAX_PROFILES;
 
   // Compatibilidad de loaders según la versión seleccionada
   const currentCompatibility = useMemo(() => {
@@ -206,13 +234,21 @@ export default function App() {
 
   // --- Manejo de Perfiles ---
   const handleOpenProfileDialog = () => {
+    if (isProfileLimitReached) {
+      setNotice(t("messages.profileLimitReached", { max: MAX_PROFILES }));
+      return;
+    }
     setNewProfileName("");
-    setNewProfileAvatar("steve");
+    setNewProfileAvatar("creeper");
     setProfileDialog(true);
   };
 
   const createProfile = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (isProfileLimitReached) {
+      setNotice(t("messages.profileLimitReached", { max: MAX_PROFILES }));
+      return;
+    }
     const cleanName = newProfileName.trim();
     if (!cleanName) return;
 
@@ -241,25 +277,26 @@ export default function App() {
 
     if (isFirst) {
       setNotice(`¡Bienvenido ${cleanName}! Tu perfil ha sido configurado.`);
+      setIsInsideProfile(true);
       setTab("instances");
     } else {
       setNotice(`Perfil "${cleanName}" creado correctamente.`);
     }
   };
 
-  const activateProfile = async (profileId: string) => {
-    if (state.activeProfileId === profileId) return;
-    const target = state.profiles.find((p) => p.id === profileId);
-    await persist({ ...state, activeProfileId: profileId });
-    setNotice(`Perfil activo cambiado a "${target?.name ?? "offline"}".`);
+  const enterProfile = async (profileId: string) => {
+    if (state.activeProfileId !== profileId) {
+      await persist({ ...state, activeProfileId: profileId });
+    }
+    setIsInsideProfile(true);
+    setTab("instances");
+  };
+
+  const exitProfile = () => {
+    setIsInsideProfile(false);
   };
 
   const promptDeleteProfile = (profile: OfflineProfile) => {
-    if (state.profiles.length <= 1) {
-      setNotice("Debes conservar al menos un perfil offline.");
-      return;
-    }
-
     const linkedCount = countInstancesForProfile(profile.id);
     const extraMsg = linkedCount > 0
       ? `${t("messages.confirmDeleteProfileDesc")} (${linkedCount} ${t("profiles.instancesCount").toLowerCase()})`
@@ -274,8 +311,9 @@ export default function App() {
         try {
           const nextProfiles = state.profiles.filter((p) => p.id !== profile.id);
           let nextActiveId = state.activeProfileId;
-          if (state.activeProfileId === profile.id) {
+          if (state.activeProfileId === profile.id || nextProfiles.length === 0) {
             nextActiveId = nextProfiles[0]?.id ?? null;
+            setIsInsideProfile(false);
           }
           const nextState: LauncherState = {
             ...state,
@@ -283,7 +321,7 @@ export default function App() {
             activeProfileId: nextActiveId,
           };
           await persist(nextState);
-          setNotice(`Perfil "${profile.name}" OK.`);
+          setNotice(`Perfil "${profile.name}" eliminado.`);
         } catch (error) {
           setNotice(`Error: ${String(error)}`);
         }
@@ -408,81 +446,223 @@ export default function App() {
   const isFirstRun = ready && state.profiles.length === 0;
 
   return (
-    <div className="app-shell">
-      {/* Sidebar */}
-      <aside className="sidebar">
-        <div
-          className="brand clickable"
-          onClick={() => launcherRepository.openUrl(LAUNCHER_CONFIG.website)}
-          title={`Visitar ${LAUNCHER_CONFIG.website}`}
-        >
-          <img src="/logo.png" className="brand-mark-img" alt="Logo" />
-          <span>
-            {LAUNCHER_CONFIG.titlePrefix}<span className="brand-light">{LAUNCHER_CONFIG.titleSuffix}</span>
-          </span>
-        </div>
-
-        <div className="nav-label">{t("nav.menu")}</div>
-        <button
-          className={`nav-item ${tab === "instances" ? "active" : ""}`}
-          onClick={() => setTab("instances")}
-        >
-          <LayoutGrid size={17} />
-          {t("nav.instances")}
-          <span className="nav-count">{state.instances.length}/{MAX_INSTANCES}</span>
-        </button>
-
-        <button
-          className={`nav-item ${tab === "profiles" ? "active" : ""}`}
-          onClick={() => setTab("profiles")}
-        >
-          <Users size={17} />
-          {t("nav.profiles")}
-          <span className="nav-count">{state.profiles.length}</span>
-        </button>
-
-        <button
-          className={`nav-item ${tab === "settings" ? "active" : ""}`}
-          onClick={() => setTab("settings")}
-        >
-          <Settings2 size={17} />
-          {t("nav.settings")}
-        </button>
-
-        <div className="sidebar-bottom">
-          <div
-            className="sidebar-user clickable"
-            onClick={() => setTab("profiles")}
-            title={t("nav.profiles")}
-          >
-            <div className={`avatar avatar-${activeProfile?.avatar ?? "steve"}`}>
-              {activeProfile ? activeProfile.name.charAt(0).toUpperCase() : "?"}
+    <>
+      {!isInsideProfile ? (
+        <div className="profile-gate-screen">
+          <header className="profile-gate-header">
+            <div
+              className="brand clickable"
+              onClick={() => launcherRepository.openUrl(LAUNCHER_CONFIG.website)}
+              title={`Visitar ${LAUNCHER_CONFIG.website}`}
+            >
+              <img src="/logo.png" className="brand-mark-img" alt="Logo" />
+              <div className="brand-info">
+                <div className="brand-title">
+                  {LAUNCHER_CONFIG.titlePrefix}<span className="brand-light">{LAUNCHER_CONFIG.titleSuffix}</span>
+                </div>
+                <span className="brand-version">{displayVersion}</span>
+              </div>
             </div>
-            <div>
-              <strong>{activeProfile ? activeProfile.name : t("nav.noProfile")}</strong>
-              <small>{activeProfile ? t("nav.activeProfile") : t("nav.createProfile")}</small>
+            <div className="profile-gate-tools">
+              {AVAILABLE_LANGUAGES.map((lang) => {
+                const isSelected = currentLang === lang.code;
+                return (
+                  <button
+                    key={lang.code}
+                    type="button"
+                    className={`lang-gate-badge ${isSelected ? "selected" : ""}`}
+                    onClick={() => changeLanguage(lang.code)}
+                    title={lang.label}
+                  >
+                    {lang.short}
+                  </button>
+                );
+              })}
             </div>
-            <MoreHorizontal size={18} />
-          </div>
-        </div>
-      </aside>
+          </header>
 
-      {/* Main Content */}
-      <main className="main-content">
-        <header className="topbar">
-          <div className="breadcrumb">
-            {LAUNCHER_CONFIG.name} <span>/</span>{" "}
-            <b>{tab === "instances" ? t("instances.title") : tab === "profiles" ? t("profiles.title") : t("settings.title")}</b>
-          </div>
+          <main className="profile-gate-content">
+            <div className="profile-gate-hero">
+              <span className="profile-gate-version-badge">{displayVersion}</span>
+              <h1 className="profile-gate-title">{t("profiles.whoIsPlaying")}</h1>
+              <p className="profile-gate-subtitle">{t("profiles.whoIsPlayingDesc")}</p>
+            </div>
+
+            <div className="profile-gate-grid">
+              {state.profiles.map((p) => {
+                const isSelected = p.id === state.activeProfileId;
+                const instanceCount = countInstancesForProfile(p.id);
+                return (
+                  <div
+                    key={p.id}
+                    className={`profile-gate-card ${isSelected ? "highlight" : ""}`}
+                    onClick={() => enterProfile(p.id)}
+                  >
+                    <button
+                      type="button"
+                      className="profile-gate-delete-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        promptDeleteProfile(p);
+                      }}
+                      title={t("instances.delete")}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+
+                    <div className="profile-gate-card-inner">
+                      <div className={`avatar-xl avatar-${p.avatar ?? "creeper"}`}>
+                        <img
+                          src={getAvatarImage(p.avatar)}
+                          alt=""
+                          onError={(e) => {
+                            (e.currentTarget as HTMLElement).style.display = "none";
+                          }}
+                        />
+                        <span className="avatar-fallback">{p.name.charAt(0).toUpperCase()}</span>
+                      </div>
+                      <h3 className="profile-gate-card-name" title={p.name}>{p.name}</h3>
+                      <span className="profile-gate-card-meta">
+                        {instanceCount} {instanceCount === 1 ? "instancia" : "instancias"}
+                      </span>
+
+                      <button
+                        type="button"
+                        className="profile-gate-enter-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          enterProfile(p.id);
+                        }}
+                      >
+                        <UserCheck size={14} />
+                        {t("profiles.enterProfile")}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {!isProfileLimitReached && (
+                <div
+                  className="profile-gate-card create-card"
+                  onClick={handleOpenProfileDialog}
+                >
+                  <div className="profile-gate-card-inner">
+                    <div className="create-avatar-box">
+                      <UserPlus size={26} strokeWidth={1.75} />
+                    </div>
+                    <h3 className="profile-gate-card-name">{t("profiles.newProfile")}</h3>
+                    <span className="profile-gate-card-meta">
+                      {state.profiles.length} / {MAX_PROFILES}
+                    </span>
+
+                    <button
+                      type="button"
+                      className="profile-gate-enter-btn create-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenProfileDialog();
+                      }}
+                    >
+                      <Plus size={14} />
+                      {t("profiles.newProfile")}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </main>
+
+          <footer className="profile-gate-footer">
+            <span>{LAUNCHER_CONFIG.name} {displayVersion}</span>
+            <span className="footer-dot">·</span>
+            <span>{t("footer.mojangDisclaimer")}</span>
+          </footer>
+        </div>
+      ) : (
+        <div className="app-shell">
+          {/* Sidebar */}
+          <aside className="sidebar">
+            <div
+              className="brand clickable"
+              onClick={() => launcherRepository.openUrl(LAUNCHER_CONFIG.website)}
+              title={`Visitar ${LAUNCHER_CONFIG.website}`}
+            >
+              <img src="/logo.png" className="brand-mark-img" alt="Logo" />
+              <div className="brand-info">
+                <div className="brand-title">
+                  {LAUNCHER_CONFIG.titlePrefix}<span className="brand-light">{LAUNCHER_CONFIG.titleSuffix}</span>
+                </div>
+                <span className="brand-version">{displayVersion}</span>
+              </div>
+            </div>
+
+            <div className="nav-label">{t("nav.menu")}</div>
+            <button
+              className={`nav-item ${tab === "instances" ? "active" : ""}`}
+              onClick={() => setTab("instances")}
+            >
+              <LayoutGrid size={17} />
+              {t("nav.instances")}
+              <span className="nav-count">{state.instances.length}/{MAX_INSTANCES}</span>
+            </button>
+
+            <button
+              className={`nav-item ${tab === "settings" ? "active" : ""}`}
+              onClick={() => setTab("settings")}
+            >
+              <Settings2 size={17} />
+              {t("nav.settings")}
+            </button>
+
+            <div className="sidebar-bottom">
+              <div className="sidebar-user" title={activeProfile?.name ?? t("nav.noProfile")}>
+                <div className={`avatar avatar-${activeProfile?.avatar ?? "creeper"}`}>
+                  <img
+                    src={getAvatarImage(activeProfile?.avatar)}
+                    alt=""
+                    onError={(e) => {
+                      (e.currentTarget as HTMLElement).style.display = "none";
+                    }}
+                  />
+                  <span className="avatar-fallback">
+                    {activeProfile ? activeProfile.name.charAt(0).toUpperCase() : "?"}
+                  </span>
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>
+                    {activeProfile ? activeProfile.name : t("nav.noProfile")}
+                  </strong>
+                  <small>{t("nav.activeProfile")}</small>
+                </div>
+                <button
+                  type="button"
+                  className="exit-profile-button"
+                  onClick={exitProfile}
+                  title={t("profiles.exitProfile")}
+                >
+                  <LogOut size={14} />
+                </button>
+              </div>
+            </div>
+          </aside>
+
+          {/* Main Content */}
+          <main className="main-content">
+            <header className="topbar">
+              <div className="breadcrumb">
+                {LAUNCHER_CONFIG.name} <span>/</span>{" "}
+                <b>{tab === "instances" ? t("instances.title") : t("settings.title")}</b>
+              </div>
           <div className="top-actions">
             <span className="local-label">
               <span />
-              {t("footer.tagline")}
+              {t("settings.local")}
             </span>
             <button
               className="icon-button"
-              title="Ayuda"
-              onClick={() => setNotice(LAUNCHER_CONFIG.description)}
+              title={t("settings.aboutTitle")}
+              onClick={() => setNotice(t("settings.aboutDesc"))}
             >
               <CircleHelp size={18} />
             </button>
@@ -544,15 +724,20 @@ export default function App() {
                     : "—"}
                 </small>
               </div>
-              <div className="stat-card" style={{ cursor: "pointer" }} onClick={() => setTab("profiles")}>
+              <div
+                className="stat-card"
+                style={{ cursor: "pointer" }}
+                onClick={exitProfile}
+                title={t("profiles.switchProfile")}
+              >
                 <div className="stat-icon amber">
                   <UserRound size={18} />
                 </div>
                 <div>
-                  <span>{t("profiles.title").toUpperCase()}</span>
-                  <strong>{state.profiles.length}</strong>
+                  <span>{t("profiles.active").toUpperCase()}</span>
+                  <strong>{activeProfile ? activeProfile.name : "—"}</strong>
                 </div>
-                <small>{activeProfile ? `${t("profiles.active")}: ${activeProfile.name}` : t("nav.noProfile")}</small>
+                <small>{t("profiles.switchProfile")}</small>
               </div>
             </section>
 
@@ -669,116 +854,6 @@ export default function App() {
           </>
         )}
 
-        {/* --- PESTAÑA: PERFILES --- */}
-        {tab === "profiles" && (
-          <>
-            <section className="welcome-row">
-              <div>
-                <div className="eyebrow">
-                  <Users size={14} /> {t("profiles.eyebrow")}
-                </div>
-                <h1>{t("profiles.title")}</h1>
-                <p className="subtitle">{t("profiles.subtitle")}</p>
-              </div>
-              <button className="primary-button" onClick={handleOpenProfileDialog}>
-                <UserPlus size={18} /> {t("profiles.newProfile")}
-              </button>
-            </section>
-
-            <section className="instances-section">
-              <div className="section-heading">
-                <div>
-                  <h2>{t("profiles.title")}</h2>
-                  <p>{t("profiles.subtitle")}</p>
-                </div>
-                <div className="list-tools">
-                  <label className="search-box">
-                    <Search size={16} />
-                    <input
-                      value={profileFilter}
-                      onChange={(event) => setProfileFilter(event.target.value)}
-                      placeholder={t("profiles.searchPlaceholder")}
-                    />
-                  </label>
-                </div>
-              </div>
-
-              {!ready ? (
-                <div className="empty-state">
-                  <div className="empty-icon">
-                    <Users size={24} />
-                  </div>
-                  <h3>...</h3>
-                </div>
-              ) : shownProfiles.length === 0 ? (
-                <div className="empty-state">
-                  <div className="empty-icon">
-                    <UserPlus size={24} />
-                  </div>
-                  <h3>{t("profiles.noProfilesTitle")}</h3>
-                  <p>{t("profiles.noProfilesDesc")}</p>
-                  <button className="primary-button" onClick={handleOpenProfileDialog}>
-                    <Plus size={16} /> {t("profiles.createFirstProfile")}
-                  </button>
-                </div>
-              ) : (
-                <div className="profile-grid">
-                  {shownProfiles.map((p) => {
-                    const isActive = p.id === state.activeProfileId;
-                    return (
-                      <article
-                        className={`profile-card-simple ${isActive ? "is-active" : ""}`}
-                        key={p.id}
-                      >
-                        <div className="profile-simple-main">
-                          <div className={`avatar-simple avatar-${p.avatar ?? "steve"}`}>
-                            {p.name.charAt(0).toUpperCase()}
-                          </div>
-                          <div className="profile-simple-info">
-                            <div className="profile-name-row">
-                              <h3>{p.name}</h3>
-                              {isActive && (
-                                <span className="badge-active-simple">
-                                  <Check size={10} /> {t("profiles.active")}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="profile-simple-actions">
-                          {!isActive && (
-                            <button
-                              type="button"
-                              className="secondary-button compact"
-                              onClick={() => activateProfile(p.id)}
-                              title={t("profiles.useThis")}
-                            >
-                              <UserCheck size={13} /> {t("profiles.useThis")}
-                            </button>
-                          )}
-
-                          <button
-                            type="button"
-                            className="icon-button danger compact"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              promptDeleteProfile(p);
-                            }}
-                            title={t("instances.delete")}
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </article>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
-          </>
-        )}
-
         {/* --- PESTAÑA: AJUSTES --- */}
         {tab === "settings" && (
           <>
@@ -796,7 +871,7 @@ export default function App() {
               {/* Selector de Idiomas */}
               <div className="settings-box">
                 <h3>
-                  <Languages size={16} style={{ verticalAlign: "middle", marginRight: 8 }} />
+                  <Globe size={16} style={{ verticalAlign: "middle", marginRight: 8 }} />
                   {t("settings.languageTitle")}
                 </h3>
                 <p>{t("settings.languageDesc")}</p>
@@ -810,7 +885,7 @@ export default function App() {
                         className={`language-chip ${isSelected ? "selected" : ""}`}
                         onClick={() => changeLanguage(lang.code)}
                       >
-                        <span className="lang-flag">{lang.flag}</span>
+                        <span className="lang-badge">{lang.short}</span>
                         <span className="lang-name">{lang.label}</span>
                         {isSelected && <Check size={15} className="lang-check" />}
                       </button>
@@ -822,7 +897,7 @@ export default function App() {
               {/* Acerca del Launcher */}
               <div className="settings-box">
                 <h3>{t("settings.aboutTitle")}</h3>
-                <p>{LAUNCHER_CONFIG.description}</p>
+                <p>{t("settings.aboutDesc")}</p>
                 <div className="settings-row">
                   <div>
                     <div className="settings-row-title">{t("settings.version")}</div>
@@ -836,6 +911,13 @@ export default function App() {
                     <div className="settings-row-desc">{t("settings.instanceLimitDesc")}</div>
                   </div>
                   <span className="settings-badge">{state.instances.length} / {MAX_INSTANCES}</span>
+                </div>
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-row-title">{t("settings.profileLimit")}</div>
+                    <div className="settings-row-desc">{t("settings.profileLimitDesc")}</div>
+                  </div>
+                  <span className="settings-badge">{state.profiles.length} / {MAX_PROFILES}</span>
                 </div>
                 <div className="settings-row">
                   <div>
@@ -870,6 +952,12 @@ export default function App() {
                     </button>
                   </div>
                 )}
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-row-title">{t("settings.disclaimerTitle")}</div>
+                    <div className="settings-row-desc">{t("footer.mojangDisclaimer")}</div>
+                  </div>
+                </div>
               </div>
 
               <div className="settings-box">
@@ -899,25 +987,31 @@ export default function App() {
         )}
 
         <footer className="page-footer">
-          <span>
-            {LAUNCHER_CONFIG.titlePrefix} {LAUNCHER_CONFIG.titleSuffix} <b>·</b> {displayVersion}
+          <span className="footer-disclaimer">
+            {t("footer.mojangDisclaimer")}
           </span>
-          <span
-            style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}
-            onClick={() => launcherRepository.openUrl(LAUNCHER_CONFIG.website)}
-            title={LAUNCHER_CONFIG.website}
-          >
-            {t("footer.tagline")} <ExternalLink size={10} />
-          </span>
+          {LAUNCHER_CONFIG.website && (
+            <span
+              className="footer-link"
+              onClick={() => launcherRepository.openUrl(LAUNCHER_CONFIG.website)}
+              title={LAUNCHER_CONFIG.website}
+            >
+              {LAUNCHER_CONFIG.name} <ExternalLink size={10} />
+            </span>
+          )}
         </footer>
 
-        {notice && (
-          <div className="toast" role="status">
-            {notice}
-            <button onClick={() => setNotice("")}>×</button>
-          </div>
-        )}
       </main>
+    </div>
+  )}
+
+  {/* Aviso flotante global */}
+  {notice && (
+    <div className="toast" role="status">
+      {notice}
+      <button onClick={() => setNotice("")}>×</button>
+    </div>
+  )}
 
       {/* --- MODAL DE CONFIRMACIÓN CUSTOM (REEMPLAZA WINDOW.CONFIRM) --- */}
       {confirmModal && confirmModal.open && (
@@ -971,7 +1065,7 @@ export default function App() {
         <div
           className="modal-backdrop"
           onMouseDown={(event) => {
-            if (!isFirstRun && event.target === event.currentTarget) {
+            if (event.target === event.currentTarget) {
               setProfileDialog(false);
             }
           }}
@@ -980,17 +1074,19 @@ export default function App() {
             <div className="modal-title">
               <div>
                 <div className="eyebrow">{isFirstRun ? "WELCOME" : t("profiles.eyebrow")}</div>
-                <h2>{isFirstRun ? t("profileModal.firstRunHint") : t("profileModal.title")}</h2>
+                <h2>
+                  {isFirstRun
+                    ? t("profileModal.firstRunHint")
+                    : `${t("profileModal.title")} (${state.profiles.length + 1}/${MAX_PROFILES})`}
+                </h2>
               </div>
-              {!isFirstRun && (
-                <button
-                  type="button"
-                  className="icon-button"
-                  onClick={() => setProfileDialog(false)}
-                >
-                  ×
-                </button>
-              )}
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setProfileDialog(false)}
+              >
+                ×
+              </button>
             </div>
 
             {isFirstRun && (
@@ -1013,9 +1109,6 @@ export default function App() {
                 onChange={(event) => setNewProfileName(event.target.value)}
                 placeholder={t("profileModal.namePlaceholder")}
               />
-              <small className="field-hint">
-                {t("nav.offlineMode")}
-              </small>
             </label>
 
             <label>
@@ -1028,7 +1121,14 @@ export default function App() {
                     onClick={() => setNewProfileAvatar(preset.id)}
                   >
                     <div className={`avatar-preview avatar-${preset.id}`}>
-                      {preset.preview}
+                      <img
+                        src={preset.image}
+                        alt=""
+                        onError={(e) => {
+                          (e.currentTarget as HTMLElement).style.display = "none";
+                        }}
+                      />
+                      <span className="avatar-fallback">{preset.preview}</span>
                     </div>
                     <span>{preset.label}</span>
                   </div>
@@ -1036,21 +1136,14 @@ export default function App() {
               </div>
             </label>
 
-            <div className="modal-note">
-              <WifiOff size={16} />
-              {t("nav.offlineMode")}
-            </div>
-
             <div className="modal-actions">
-              {!isFirstRun && (
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => setProfileDialog(false)}
-                >
-                  {t("profileModal.cancel")}
-                </button>
-              )}
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setProfileDialog(false)}
+              >
+                {t("profileModal.cancel")}
+              </button>
               <button className="primary-button" type="submit">
                 <Plus size={17} /> {t("profileModal.submit")}
               </button>
@@ -1198,6 +1291,6 @@ export default function App() {
           </form>
         </div>
       )}
-    </div>
+    </>
   );
 }
