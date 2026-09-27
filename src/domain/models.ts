@@ -35,6 +35,7 @@ export interface GameInstance {
   loader: Loader;
   profileId: string;
   createdAt: string;
+  ramGb?: number;
 }
 
 export interface GameVersion {
@@ -62,3 +63,55 @@ export const EMPTY_STATE: LauncherState = {
   activeProfileId: null,
   language: "es",
 };
+
+export interface InstalledModInfo {
+  filename: string;
+  name: string;
+  enabled: boolean;
+  sizeBytes: number;
+  modifiedAt?: number;
+}
+
+export interface ModrinthSearchResult {
+  projectId: string;
+  projectType: string;
+  slug: string;
+  title: string;
+  description: string;
+  categories: string[];
+  clientSide?: string;
+  serverSide?: string;
+  iconUrl: string | null;
+  downloads: number;
+  follows: number;
+  author: string;
+  latestVersion?: string;
+}
+
+export interface ModrinthVersionFile {
+  url: string;
+  filename: string;
+  primary: boolean;
+  size: number;
+  hashes: {
+    sha1?: string;
+    sha512?: string;
+  };
+}
+
+export interface ModrinthVersion {
+  id: string;
+  projectId: string;
+  name: string;
+  versionNumber: string;
+  gameVersions: string[];
+  loaders: string[];
+  files: ModrinthVersionFile[];
+}
+
+export interface JavaCheckResult {
+  needsDownload: boolean;
+  requiredVersion: number;
+  mcVersion: string;
+  currentJavaPath?: string | null;
+}

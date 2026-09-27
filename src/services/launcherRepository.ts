@@ -67,9 +67,15 @@ export const launcherRepository = {
     }
     console.log("Simulación web: Abriendo carpeta de instancia en Finder", instanceId);
   },
-  getSystemJavas: async () => {
+  getInstanceLogs: async (instanceId: string): Promise<string> => {
     if (isTauri) {
-      return invoke<import("../domain/models").JavaEnvironment[]>("get_system_javas");
+      return invoke<string>("get_instance_logs", { instanceId });
+    }
+    return "Simulación web: Registros de la consola del juego para " + instanceId;
+  },
+  getSystemJavas: async (force?: boolean) => {
+    if (isTauri) {
+      return invoke<import("../domain/models").JavaEnvironment[]>("get_system_javas", { force });
     }
     return [
       {
@@ -81,11 +87,97 @@ export const launcherRepository = {
       }
     ];
   },
+  checkInstanceJava: async (instanceId: string): Promise<import("../domain/models").JavaCheckResult> => {
+    if (isTauri) {
+      return invoke<import("../domain/models").JavaCheckResult>("check_instance_java", { instanceId });
+    }
+    return {
+      needsDownload: false,
+      requiredVersion: 21,
+      mcVersion: "1.21.1",
+      currentJavaPath: "java",
+    };
+  },
+  downloadJavaRuntime: async (version: number): Promise<string> => {
+    if (isTauri) {
+      return invoke<string>("download_java_runtime", { version });
+    }
+    return `Simulación web: Java ${version} descargado e instalado.`;
+  },
   openUrl: async (url: string): Promise<void> => {
     if (isTauri) {
       return invoke<void>("open_external_url", { url });
     }
     window.open(url, "_blank");
   },
+  listInstanceMods: async (
+    instanceId: string,
+    folderType?: string
+  ): Promise<import("../domain/models").InstalledModInfo[]> => {
+    if (isTauri) {
+      return invoke<import("../domain/models").InstalledModInfo[]>("list_instance_mods", {
+        instanceId,
+        folderType,
+      });
+    }
+    const key = `kato_${folderType || "mods"}_${instanceId}`;
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : [];
+  },
+  toggleInstanceMod: async (
+    instanceId: string,
+    filename: string,
+    enable: boolean,
+    folderType?: string
+  ): Promise<void> => {
+    if (isTauri) {
+      return invoke<void>("toggle_instance_mod", { instanceId, filename, enable, folderType });
+    }
+    const current = await launcherRepository.listInstanceMods(instanceId, folderType);
+    const updated = current.map((m) => {
+      if (m.filename === filename) {
+        return { ...m, enabled: enable };
+      }
+      return m;
+    });
+    const key = `kato_${folderType || "mods"}_${instanceId}`;
+    localStorage.setItem(key, JSON.stringify(updated));
+  },
+  deleteInstanceMod: async (
+    instanceId: string,
+    filename: string,
+    folderType?: string
+  ): Promise<void> => {
+    if (isTauri) {
+      return invoke<void>("delete_instance_mod", { instanceId, filename, folderType });
+    }
+    const current = await launcherRepository.listInstanceMods(instanceId, folderType);
+    const updated = current.filter((m) => m.filename !== filename);
+    const key = `kato_${folderType || "mods"}_${instanceId}`;
+    localStorage.setItem(key, JSON.stringify(updated));
+  },
+  installModFromUrl: async (
+    instanceId: string,
+    url: string,
+    filename: string,
+    folderType?: string
+  ): Promise<void> => {
+    if (isTauri) {
+      return invoke<void>("install_mod_from_url", { instanceId, url, filename, folderType });
+    }
+    const current = await launcherRepository.listInstanceMods(instanceId, folderType);
+    if (!current.some((m) => m.filename === filename)) {
+      current.push({
+        filename,
+        name: filename.replace(/\.(jar|zip)(\.disabled)?$/, ""),
+        enabled: true,
+        sizeBytes: 1024 * 500,
+        modifiedAt: Math.floor(Date.now() / 1000),
+      });
+      const key = `kato_${folderType || "mods"}_${instanceId}`;
+      localStorage.setItem(key, JSON.stringify(current));
+    }
+  },
 };
+
 

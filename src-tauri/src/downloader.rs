@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -107,12 +109,20 @@ struct AssetIndexRef {
 struct LibraryEntry {
     pub name: Option<String>,
     downloads: Option<LibraryDownloads>,
+    natives: Option<HashMap<String, String>>,
     rules: Option<Vec<Rule>>,
+    extract: Option<ExtractRules>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+struct ExtractRules {
+    exclude: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 struct LibraryDownloads {
     artifact: Option<DownloadArtifact>,
+    classifiers: Option<HashMap<String, DownloadArtifact>>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -256,7 +266,46 @@ fn parse_jvm_version_from_plist(content: &str) -> (String, u32) {
     ("21.0".to_string(), 21)
 }
 
+static JAVA_CACHE: Mutex<Option<(Instant, Vec<JavaEnvironment>)>> = Mutex::new(None);
+
+pub fn invalidate_java_cache() {
+    if let Ok(mut lock) = JAVA_CACHE.lock() {
+        *lock = None;
+    }
+}
+
 fn detect_java_version(bin_path: &Path) -> (String, u32) {
+    // 1. Fast path: leer archivo `release` del JDK/JRE en el disco (instantáneo, <0.1ms sin procesos)
+    if let Ok(canonical) = bin_path.canonicalize() {
+        if let Some(bin_dir) = canonical.parent() {
+            if let Some(root_dir) = bin_dir.parent() {
+                let candidates = [
+                    root_dir.join("release"),
+                    root_dir.join("Contents").join("Home").join("release"),
+                ];
+                for cand in candidates {
+                    if cand.is_file() {
+                        if let Ok(content) = std::fs::read_to_string(&cand) {
+                            if let Some(pos) = content.find("JAVA_VERSION=\"") {
+                                let after = &content[pos + 14..];
+                                if let Some(end) = after.find('"') {
+                                    let ver = &after[..end];
+                                    let major = if ver.starts_with("1.") {
+                                        ver.split('.').nth(1).and_then(|m| m.parse().ok()).unwrap_or(8)
+                                    } else {
+                                        ver.split('.').next().and_then(|m| m.parse().ok()).unwrap_or(21)
+                                    };
+                                    return (ver.to_string(), major);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Fallback: ejecutar `java -version` únicamente si no existe archivo `release`
     if let Ok(output) = std::process::Command::new(bin_path).arg("-version").output() {
         let text = String::from_utf8_lossy(&output.stderr);
         if let Some(pos) = text.find("version \"") {
@@ -288,7 +337,64 @@ fn guess_version_from_path(path: &Path) -> (String, u32) {
     }
 }
 
-pub fn scan_system_javas() -> Vec<JavaEnvironment> {
+pub fn find_java_binary_in_dir(dir: &Path) -> Option<PathBuf> {
+    if !dir.exists() {
+        return None;
+    }
+    let candidates = [
+        dir.join("Contents").join("Home").join("bin").join("java"),
+        dir.join("bin").join("java"),
+        dir.join("bin").join("javaw.exe"),
+        dir.join("bin").join("java.exe"),
+    ];
+    for cand in candidates {
+        if cand.exists() {
+            return Some(cand);
+        }
+    }
+    None
+}
+
+pub fn get_required_java_version(mc_version: &str) -> u32 {
+    if (is_version_at_least(mc_version, 1, 20) && (mc_version.contains(".5") || mc_version.contains(".6")))
+        || is_version_at_least(mc_version, 1, 21)
+    {
+        21
+    } else if is_version_at_least(mc_version, 1, 17) {
+        17
+    } else {
+        8
+    }
+}
+
+pub fn get_instance_required_java(app_data: &Path, mc_version: &str) -> u32 {
+    let version_json_path = app_data
+        .join("versions")
+        .join(mc_version)
+        .join(format!("{mc_version}.json"));
+    if version_json_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&version_json_path) {
+            if let Ok(pkg) = serde_json::from_str::<VersionPackage>(&content) {
+                if let Some(jv) = pkg.java_version {
+                    if let Some(major) = jv.major_version {
+                        return major;
+                    }
+                }
+            }
+        }
+    }
+    get_required_java_version(mc_version)
+}
+
+pub fn scan_system_javas(app_data: Option<&Path>) -> Vec<JavaEnvironment> {
+    if let Ok(cache) = JAVA_CACHE.lock() {
+        if let Some((instant, ref list)) = *cache {
+            if instant.elapsed() < Duration::from_secs(60) {
+                return list.clone();
+            }
+        }
+    }
+
     let mut results = Vec::new();
     let mut seen_paths = std::collections::HashSet::new();
 
@@ -315,6 +421,24 @@ pub fn scan_system_javas() -> Vec<JavaEnvironment> {
             is_recommended: major == 21,
         });
     };
+
+    // 0. Kato Launcher Runtimes Portables (<app_data>/runtimes/java-*)
+    if let Some(base_path) = app_data {
+        let runtimes_dir = base_path.join("runtimes");
+        if runtimes_dir.exists() {
+            if let Ok(entries) = std::fs::read_dir(&runtimes_dir) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.is_dir() {
+                        let folder_name = entry.file_name().to_string_lossy().to_string();
+                        if let Some(bin) = find_java_binary_in_dir(&p) {
+                            add_candidate(bin, format!("Java Portable ({folder_name})"));
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // 1. JAVA_HOME (Multiplataforma: Windows, Linux, macOS)
     if let Ok(java_home) = std::env::var("JAVA_HOME") {
@@ -428,11 +552,67 @@ pub fn scan_system_javas() -> Vec<JavaEnvironment> {
         }
     }
 
+    if let Ok(mut cache) = JAVA_CACHE.lock() {
+        *cache = Some((Instant::now(), results.clone()));
+    }
+
     results
 }
 
-pub fn select_best_java(required_major: u32, mc_version: &str) -> Result<String, String> {
-    let javas = scan_system_javas();
+#[cfg(target_os = "macos")]
+pub fn is_java_x86_compatible(bin_path: &Path) -> bool {
+    // 1. Fast path: leer OS_ARCH del archivo `release`
+    if let Ok(canonical) = bin_path.canonicalize() {
+        if let Some(bin_dir) = canonical.parent() {
+            if let Some(root_dir) = bin_dir.parent() {
+                let candidates = [
+                    root_dir.join("release"),
+                    root_dir.join("Contents").join("Home").join("release"),
+                ];
+                for cand in candidates {
+                    if cand.is_file() {
+                        if let Ok(content) = std::fs::read_to_string(&cand) {
+                            if let Some(pos) = content.find("OS_ARCH=\"") {
+                                let after = &content[pos + 9..];
+                                if let Some(end) = after.find('"') {
+                                    let arch = &after[..end];
+                                    if arch == "x86_64" || arch == "i386" || arch == "amd64" {
+                                        return true;
+                                    } else if arch == "aarch64" || arch == "arm64" {
+                                        return false;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Fallback con /usr/bin/file
+    if let Ok(output) = std::process::Command::new("/usr/bin/file")
+        .arg("-b")
+        .arg("-L")
+        .arg(bin_path)
+        .output()
+    {
+        let text = String::from_utf8_lossy(&output.stdout);
+        text.contains("x86_64") || text.contains("i386")
+    } else {
+        true
+    }
+}
+
+pub fn select_best_java(
+    required_major: u32,
+    mc_version: &str,
+    app_data: Option<&Path>,
+) -> Result<String, String> {
+    let is_lwjgl3 = is_version_at_least(mc_version, 1, 13);
+    let requires_x86 = cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") && !is_lwjgl3;
+
+    let javas = scan_system_javas(app_data);
 
     if javas.is_empty() {
         return Err(format!(
@@ -441,71 +621,91 @@ pub fn select_best_java(required_major: u32, mc_version: &str) -> Result<String,
         ));
     }
 
-    // 1. Coincidencia exacta con la versión requerida
-    if let Some(exact) = javas.iter().find(|j| j.major_version == required_major) {
+    // En macOS Apple Silicon, LWJGL 2 (< 1.13) requiere un runtime Java con soporte x86_64 (Rosetta 2)
+    #[cfg(target_os = "macos")]
+    let valid_javas: Vec<JavaEnvironment> = if requires_x86 {
+        javas
+            .into_iter()
+            .filter(|j| is_java_x86_compatible(Path::new(&j.path)))
+            .collect()
+    } else {
+        javas
+    };
+
+    #[cfg(not(target_os = "macos"))]
+    let valid_javas = javas;
+
+    // 1. Preferir un runtime portable de Kato Launcher si coincide con la versión requerida
+    if let Some(portable) = valid_javas
+        .iter()
+        .find(|j| j.major_version == required_major && j.name.contains("Portable"))
+    {
+        return Ok(portable.path.clone());
+    }
+
+    // 2. Coincidencia exacta con la versión requerida
+    if let Some(exact) = valid_javas.iter().find(|j| j.major_version == required_major) {
         return Ok(exact.path.clone());
     }
 
-    // 2. Si se requiere Java 17 o 16 (Minecraft 1.17 a 1.20.4), Java 21 LTS es 100% compatible
+    // 3. Si se requiere Java 17 o 16 (Minecraft 1.17 a 1.20.4), Java 21 LTS es 100% compatible
     if required_major == 16 || required_major == 17 {
-        if let Some(j21) = javas.iter().find(|j| j.major_version == 21) {
+        if let Some(portable21) = valid_javas
+            .iter()
+            .find(|j| j.major_version == 21 && j.name.contains("Portable"))
+        {
+            return Ok(portable21.path.clone());
+        }
+        if let Some(j21) = valid_javas.iter().find(|j| j.major_version == 21) {
             return Ok(j21.path.clone());
         }
-        if let Some(newer) = javas.iter().find(|j| j.major_version >= 17) {
+        if let Some(newer) = valid_javas.iter().find(|j| j.major_version >= 17) {
             return Ok(newer.path.clone());
         }
     }
 
-    // 3. Si se requiere Java 21 o superior, preferir Java 21 LTS primero
+    // 4. Si se requiere Java 21 o superior, preferir Java 21 LTS primero
     if required_major >= 21 {
-        if let Some(j21) = javas.iter().find(|j| j.major_version == 21) {
+        if let Some(portable21) = valid_javas
+            .iter()
+            .find(|j| j.major_version == 21 && j.name.contains("Portable"))
+        {
+            return Ok(portable21.path.clone());
+        }
+        if let Some(j21) = valid_javas.iter().find(|j| j.major_version == 21) {
             return Ok(j21.path.clone());
         }
-        if let Some(newer) = javas.iter().find(|j| j.major_version >= 21) {
+        if let Some(newer) = valid_javas.iter().find(|j| j.major_version >= 21) {
             return Ok(newer.path.clone());
         }
     }
 
-    // Si falta la versión requerida, informar al usuario claramente sin exponer rutas privadas
+    if requires_x86 {
+        return Err(format!(
+            "Minecraft {} utiliza LWJGL 2 y requiere un entorno Java 8 compatible con x86_64 (Rosetta 2) en macOS Apple Silicon.",
+            mc_version
+        ));
+    }
+
+    // Si falta la versión requerida, informar al usuario claramente
     if required_major <= 8 {
-        let hint = if cfg!(target_os = "macos") {
-            "En macOS: brew install --cask zulu@8"
-        } else if cfg!(target_os = "windows") {
-            "En Windows: descarga Java 8 desde https://adoptium.net o Azul Zulu 8"
-        } else {
-            "En Linux: sudo apt install openjdk-8-jre"
-        };
         return Err(format!(
-            "Minecraft {} requiere Java 8. No se encontró Java 8 instalado en este equipo.\n\n{}",
-            mc_version, hint
+            "Minecraft {} requiere Java 8. No se encontró Java 8 instalado ni en runtimes portables.",
+            mc_version
         ));
     }
 
     if required_major == 16 || required_major == 17 {
-        let hint = if cfg!(target_os = "macos") {
-            "En macOS: brew install --cask temurin@21"
-        } else if cfg!(target_os = "windows") {
-            "En Windows: descarga Java 17 o 21 desde https://adoptium.net"
-        } else {
-            "En Linux: sudo apt install openjdk-21-jre"
-        };
         return Err(format!(
-            "Minecraft {} requiere Java 17 o Java 21. No se encontró una versión compatible instalada en este equipo.\n\n{}",
-            mc_version, hint
+            "Minecraft {} requiere Java 17 o Java 21. No se encontró una versión compatible instalada.",
+            mc_version
         ));
     }
 
     if required_major >= 21 {
-        let hint = if cfg!(target_os = "macos") {
-            "En macOS: brew install --cask temurin@21"
-        } else if cfg!(target_os = "windows") {
-            "En Windows: descarga Java 21 desde https://adoptium.net"
-        } else {
-            "En Linux: sudo apt install openjdk-21-jre"
-        };
         return Err(format!(
-            "Minecraft {} requiere Java 21 o superior. No se encontró Java 21 instalado en este equipo.\n\n{}",
-            mc_version, hint
+            "Minecraft {} requiere Java 21 o superior. No se encontró Java 21 instalado.",
+            mc_version
         ));
     }
 
@@ -515,8 +715,193 @@ pub fn select_best_java(required_major: u32, mc_version: &str) -> Result<String,
     ))
 }
 
+pub async fn download_portable_java(app_data: &Path, requested_version: u32) -> Result<String, String> {
+    let version = if requested_version == 16 { 17 } else { requested_version };
+    if version != 8 && version != 17 && version != 21 {
+        return Err(format!(
+            "Versión de Java {version} no soportada para descarga automática. Las versiones soportadas son 8, 17 y 21."
+        ));
+    }
+
+    let runtimes_dir = app_data.join("runtimes");
+    let dest_dir = runtimes_dir.join(format!("java-{version}"));
+
+    // 1. Si ya existe un binario ejecutable en el destino, retornar de inmediato
+    if let Some(existing_bin) = find_java_binary_in_dir(&dest_dir) {
+        return Ok(existing_bin.to_string_lossy().to_string());
+    }
+
+    std::fs::create_dir_all(&runtimes_dir)
+        .map_err(|e| format!("No se pudo crear carpeta de runtimes: {e}"))?;
+
+    // 2. Determinar plataforma y arquitectura para Adoptium API
+    let os = if cfg!(target_os = "macos") {
+        "mac"
+    } else if cfg!(target_os = "windows") {
+        "windows"
+    } else {
+        "linux"
+    };
+
+    let arch = if cfg!(target_arch = "aarch64") {
+        if cfg!(target_os = "macos") && version == 8 {
+            "x64"
+        } else {
+            "aarch64"
+        }
+    } else {
+        "x64"
+    };
+
+    let download_url = format!(
+        "https://api.adoptium.net/v3/binary/latest/{version}/ga/{os}/{arch}/jre/hotspot/normal/eclipse"
+    );
+
+    let client = reqwest::Client::builder()
+        .user_agent(LAUNCHER_USER_AGENT)
+        .build()
+        .map_err(|e| format!("Error creando cliente HTTP: {e}"))?;
+
+    let res = client
+        .get(&download_url)
+        .send()
+        .await
+        .map_err(|e| format!("Error conectando con Adoptium API: {e}"))?;
+
+    if !res.status().is_success() {
+        return Err(format!(
+            "Adoptium API respondió con error {} al solicitar Java {} ({os}/{arch}).",
+            res.status(),
+            version
+        ));
+    }
+
+    let bytes = res
+        .bytes()
+        .await
+        .map_err(|e| format!("Error descargando archivo de Java {version}: {e}"))?;
+
+    let is_windows = cfg!(target_os = "windows");
+    let archive_path = if is_windows {
+        runtimes_dir.join(format!("temp_java_{version}.zip"))
+    } else {
+        runtimes_dir.join(format!("temp_java_{version}.tar.gz"))
+    };
+
+    std::fs::write(&archive_path, &bytes)
+        .map_err(|e| format!("Error al guardar archivo temporal de Java: {e}"))?;
+
+    // Limpiar destino previo si existía incompleto
+    if dest_dir.exists() {
+        let _ = std::fs::remove_dir_all(&dest_dir);
+    }
+    std::fs::create_dir_all(&dest_dir)
+        .map_err(|e| format!("Error al crear carpeta de destino: {e}"))?;
+
+    // 3. Descomprimir según SO
+    #[cfg(unix)]
+    {
+        let status = std::process::Command::new("tar")
+            .arg("-xzf")
+            .arg(&archive_path)
+            .arg("-C")
+            .arg(&dest_dir)
+            .arg("--strip-components=1")
+            .status()
+            .map_err(|e| format!("Error al ejecutar tar: {e}"))?;
+
+        let _ = std::fs::remove_file(&archive_path);
+
+        if !status.success() {
+            let _ = std::fs::remove_dir_all(&dest_dir);
+            return Err(format!("Falló la descompresión del paquete tar.gz de Java (código {status})"));
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            // Eliminar atributo de cuarentena de Apple Gatekeeper
+            let _ = std::process::Command::new("xattr")
+                .arg("-dr")
+                .arg("com.apple.quarantine")
+                .arg(&dest_dir)
+                .status();
+
+            let bin_dir = dest_dir.join("Contents").join("Home").join("bin");
+            if bin_dir.exists() {
+                let _ = std::process::Command::new("chmod")
+                    .arg("-R")
+                    .arg("+x")
+                    .arg(&bin_dir)
+                    .status();
+            }
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            let bin_dir = dest_dir.join("bin");
+            if bin_dir.exists() {
+                let _ = std::process::Command::new("chmod")
+                    .arg("-R")
+                    .arg("+x")
+                    .arg(&bin_dir)
+                    .status();
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        let temp_extract = runtimes_dir.join(format!("temp_extract_{version}"));
+        let _ = std::fs::remove_dir_all(&temp_extract);
+        let _ = std::fs::create_dir_all(&temp_extract);
+
+        let ps_cmd = format!(
+            "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force",
+            archive_path.to_string_lossy(),
+            temp_extract.to_string_lossy()
+        );
+
+        let status = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command", &ps_cmd])
+            .status()
+            .map_err(|e| format!("Error al descomprimir con PowerShell: {e}"))?;
+
+        let _ = std::fs::remove_file(&archive_path);
+
+        if !status.success() {
+            let _ = std::fs::remove_dir_all(&temp_extract);
+            let _ = std::fs::remove_dir_all(&dest_dir);
+            return Err("Falló la extracción del runtime de Java con PowerShell.".to_string());
+        }
+
+        if let Ok(entries) = std::fs::read_dir(&temp_extract) {
+            for entry in entries.flatten() {
+                let sub = entry.path();
+                if sub.is_dir() {
+                    if let Ok(sub_entries) = std::fs::read_dir(&sub) {
+                        for sub_entry in sub_entries.flatten() {
+                            let from = sub_entry.path();
+                            let to = dest_dir.join(sub_entry.file_name());
+                            let _ = std::fs::rename(from, to);
+                        }
+                    }
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&temp_extract);
+    }
+
+    // 4. Localizar binario final
+    if let Some(bin) = find_java_binary_in_dir(&dest_dir) {
+        invalidate_java_cache();
+        Ok(bin.to_string_lossy().to_string())
+    } else {
+        Err("Java fue descargado pero no se localizó el ejecutable en el paquete.".to_string())
+    }
+}
+
 pub fn find_java() -> String {
-    select_best_java(21, "1.21.1").unwrap_or_else(|_| "java".to_string())
+    select_best_java(21, "1.21.1", None).unwrap_or_else(|_| "java".to_string())
 }
 
 pub fn parse_maven_coord(name: &str) -> Option<(String, String)> {
@@ -643,14 +1028,24 @@ fn replace_arg_placeholders(
     let natives_dir = instance_dir.join("bin");
     let launcher_cfg = get_launcher_config();
 
-    arg.replace("${library_directory}", &lib_dir.to_string_lossy())
+    let res = arg.replace("${library_directory}", &lib_dir.to_string_lossy())
         .replace("${classpath_separator}", cp_sep)
         .replace("${natives_directory}", &natives_dir.to_string_lossy())
         .replace("${game_directory}", &instance_dir.to_string_lossy())
         .replace("${assets_root}", &app_data.join("assets").to_string_lossy())
         .replace("${launcher_name}", &launcher_cfg.name)
         .replace("${launcher_version}", &launcher_cfg.version)
-        .replace("${version_name}", mc_version)
+        .replace("${version_name}", mc_version);
+
+    if res.starts_with("-DignoreList=") {
+        if !res.contains("client.jar") {
+            format!("{res},client.jar")
+        } else {
+            res
+        }
+    } else {
+        res
+    }
 }
 
 fn sync_shared_libraries_to_instance(app_libs: &Path, inst_libs: &Path) {
@@ -771,12 +1166,99 @@ fn load_custom_version_json(
     }
 }
 
+fn get_native_classifier_key(lib: &LibraryEntry) -> Option<String> {
+    let os_key = if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "osx"
+    } else {
+        "linux"
+    };
+
+    let arch_suffix = if cfg!(target_pointer_width = "64") { "64" } else { "32" };
+
+    if let Some(ref natives_map) = lib.natives {
+        if let Some(classifier_template) = natives_map.get(os_key) {
+            let classifier = classifier_template.replace("${arch}", arch_suffix);
+            return Some(classifier);
+        }
+    }
+
+    if let Some(ref downloads) = lib.downloads {
+        if let Some(ref classifiers) = downloads.classifiers {
+            let standard_key = format!("natives-{os_key}");
+            if classifiers.contains_key(&standard_key) {
+                return Some(standard_key);
+            }
+            if os_key == "osx" && classifiers.contains_key("natives-macos") {
+                return Some("natives-macos".to_string());
+            }
+        }
+    }
+
+    None
+}
+
+fn extract_natives_jar(
+    jar_path: &Path,
+    natives_dir: &Path,
+    exclude: Option<&[String]>,
+) -> Result<(), String> {
+    let file = std::fs::File::open(jar_path)
+        .map_err(|e| format!("No se pudo abrir jar de natives {}: {e}", jar_path.display()))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|e| format!("Error al leer archivo zip/jar {}: {e}", jar_path.display()))?;
+
+    let default_exclude = vec!["META-INF/".to_string()];
+    let excludes = exclude.unwrap_or(&default_exclude);
+
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i)
+            .map_err(|e| format!("Error al leer entrada del zip: {e}"))?;
+        let name = match file.enclosed_name() {
+            Some(path) => path.to_owned(),
+            None => continue,
+        };
+
+        let name_str = name.to_string_lossy();
+        if excludes.iter().any(|ex| name_str.starts_with(ex)) {
+            continue;
+        }
+
+        let outpath = natives_dir.join(&name);
+        if file.is_dir() {
+            let _ = std::fs::create_dir_all(&outpath);
+        } else {
+            if let Some(p) = outpath.parent() {
+                let _ = std::fs::create_dir_all(p);
+            }
+            let mut outfile = std::fs::File::create(&outpath)
+                .map_err(|e| format!("Error al crear archivo nativo: {e}"))?;
+            std::io::copy(&mut file, &mut outfile)
+                .map_err(|e| format!("Error al extraer archivo nativo: {e}"))?;
+
+            #[cfg(target_os = "macos")]
+            if let Some(ext) = outpath.extension().and_then(|e| e.to_str()) {
+                if ext == "jnilib" {
+                    let dylib = outpath.with_extension("dylib");
+                    let _ = std::fs::copy(&outpath, &dylib);
+                } else if ext == "dylib" {
+                    let jnilib = outpath.with_extension("jnilib");
+                    let _ = std::fs::copy(&outpath, &jnilib);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 pub struct PreparedLaunch {
     pub main_class: String,
     pub client_jar: PathBuf,
     pub library_paths: Vec<PathBuf>,
     pub asset_index_id: String,
     pub assets_dir: PathBuf,
+    pub natives_dir: PathBuf,
     pub loader_name: String,
     pub extra_jvm_args: Vec<String>,
     pub extra_game_args: Vec<String>,
@@ -949,8 +1431,10 @@ pub async fn prepare_and_download_all(
         }
     }
 
-    // 5. Descargar librerías base de Minecraft (LWJGL, etc.)
+    // 5. Descargar librerías base de Minecraft (LWJGL, etc.) y extraer natives
     let libraries_dir = app_data.join("libraries");
+    let natives_dir = instance_dir.join("bin").join("natives");
+    let _ = std::fs::create_dir_all(&natives_dir);
     let mut lib_map = LibraryMap::new();
 
     if let Some(libraries) = package_data.libraries {
@@ -958,8 +1442,9 @@ pub async fn prepare_and_download_all(
             if !is_library_allowed(&lib.rules, lib.name.as_deref()) {
                 continue;
             }
-            if let Some(downloads) = lib.downloads {
-                if let Some(art) = downloads.artifact {
+            if let Some(ref downloads) = lib.downloads {
+                // A. Artifact estándar para classpath
+                if let Some(ref art) = downloads.artifact {
                     let rel_path_opt = art.path.clone().or_else(|| {
                         lib.name.as_deref().and_then(|n| parse_maven_coord(n).map(|(_, r)| r))
                     });
@@ -999,6 +1484,51 @@ pub async fn prepare_and_download_all(
                         }
                     }
                 }
+
+                // B. Classifiers nativos (bibliotecas dll, dylib, so)
+                if let Some(ref classifiers) = downloads.classifiers {
+                    if let Some(native_key) = get_native_classifier_key(&lib) {
+                        if let Some(native_art) = classifiers.get(&native_key) {
+                            let rel_path_opt = native_art.path.clone().or_else(|| {
+                                lib.name.as_deref().and_then(|n| {
+                                    parse_maven_coord(n).map(|(_, r)| {
+                                        r.replace(".jar", &format!("-{native_key}.jar"))
+                                    })
+                                })
+                            });
+
+                            if let Some(rel_path) = rel_path_opt {
+                                let target_path = libraries_dir.join(&rel_path);
+                                let needs_download = if target_path.exists() {
+                                    std::fs::metadata(&target_path).map(|m| m.len() == 0).unwrap_or(true)
+                                } else {
+                                    true
+                                };
+
+                                if needs_download {
+                                    if let Some(parent) = target_path.parent() {
+                                        let _ = std::fs::create_dir_all(parent);
+                                    }
+                                    if let Ok(res) = client
+                                        .get(&native_art.url)
+                                        .header(reqwest::header::USER_AGENT, LAUNCHER_USER_AGENT)
+                                        .send()
+                                        .await
+                                    {
+                                        if let Ok(bytes) = res.bytes().await {
+                                            let _ = std::fs::write(&target_path, bytes);
+                                        }
+                                    }
+                                }
+
+                                if target_path.exists() {
+                                    let exclude_slice = lib.extract.as_ref().and_then(|e| e.exclude.as_deref());
+                                    let _ = extract_natives_jar(&target_path, &natives_dir, exclude_slice);
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -1020,7 +1550,7 @@ pub async fn prepare_and_download_all(
             }
         });
 
-    let java_bin = select_best_java(required_java_major, mc_version)?;
+    let java_bin = select_best_java(required_java_major, mc_version, Some(app_data))?;
 
     let mut extra_jvm_args = Vec::new();
     let mut extra_game_args = Vec::new();
@@ -1177,6 +1707,9 @@ pub async fn prepare_and_download_all(
             // Desactivar la ventana preliminar de Forge que presenta fallos gráficos en macOS
             extra_jvm_args.push("-Dfml.earlydisplay=false".to_string());
             extra_jvm_args.push("-Dforge.earlydisplay=false".to_string());
+            if !extra_jvm_args.iter().any(|a| a.starts_with("-DignoreList=")) {
+                extra_jvm_args.push(format!("-DignoreList=client-extra,{mc_version}.jar,client.jar"));
+            }
         }
 
         "NeoForge" => {
@@ -1284,6 +1817,9 @@ pub async fn prepare_and_download_all(
             if !extra_jvm_args.iter().any(|a| a.starts_with("-DlibraryDirectory=")) {
                 extra_jvm_args.push(format!("-DlibraryDirectory={}", lib_dir.to_string_lossy()));
             }
+            if !extra_jvm_args.iter().any(|a| a.starts_with("-DignoreList=")) {
+                extra_jvm_args.push(format!("-DignoreList=client-extra,{mc_version}.jar,client.jar"));
+            }
         }
 
         _ => {
@@ -1299,6 +1835,7 @@ pub async fn prepare_and_download_all(
         library_paths,
         asset_index_id,
         assets_dir,
+        natives_dir,
         loader_name: loader.to_string(),
         extra_jvm_args,
         extra_game_args,
@@ -1307,3 +1844,22 @@ pub async fn prepare_and_download_all(
         java_major: required_java_major,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_java_version_requirements() {
+        assert_eq!(get_required_java_version("1.21.4"), 21);
+        assert_eq!(get_required_java_version("1.21.1"), 21);
+        assert_eq!(get_required_java_version("1.20.5"), 21);
+        assert_eq!(get_required_java_version("1.20.4"), 17);
+        assert_eq!(get_required_java_version("1.18.2"), 17);
+        assert_eq!(get_required_java_version("1.17.1"), 17);
+        assert_eq!(get_required_java_version("1.16.5"), 8);
+        assert_eq!(get_required_java_version("1.12.2"), 8);
+        assert_eq!(get_required_java_version("1.7.10"), 8);
+    }
+}
+
