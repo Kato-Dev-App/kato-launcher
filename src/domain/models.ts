@@ -99,6 +99,13 @@ export interface ModrinthVersionFile {
   };
 }
 
+export interface ModrinthDependency {
+  versionId: string | null;
+  projectId: string | null;
+  fileName: string | null;
+  dependencyType: "required" | "optional" | "incompatible" | "embedded";
+}
+
 export interface ModrinthVersion {
   id: string;
   projectId: string;
@@ -107,6 +114,7 @@ export interface ModrinthVersion {
   gameVersions: string[];
   loaders: string[];
   files: ModrinthVersionFile[];
+  dependencies?: ModrinthDependency[];
 }
 
 export interface JavaCheckResult {

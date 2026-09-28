@@ -2,9 +2,12 @@ import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   Check,
+  ChevronDown,
   Download,
   FolderOpen,
+  History,
   Info,
+  Layers,
   Loader2,
   Package,
   Palette,
@@ -16,9 +19,20 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import type { GameInstance, InstalledModInfo, ModrinthSearchResult } from "../../../domain/models";
+import type {
+  GameInstance,
+  InstalledModInfo,
+  ModrinthSearchResult,
+  ModrinthVersion,
+  ModrinthVersionFile,
+} from "../../../domain/models";
 import { launcherRepository } from "../../../services/launcherRepository";
-import { modrinthService, type ModrinthProjectType } from "../services/modrinthService";
+import {
+  modrinthService,
+  isModFilenameInstalled,
+  type ModrinthProjectType,
+  type ModDependencyItem,
+} from "../services/modrinthService";
 import { getTranslation, type Language } from "../../../i18n";
 
 interface ModsModalProps {
@@ -49,7 +63,182 @@ export function ModsModal({ instance, language = "es", onClose, onOpenFolder }: 
   const [loadingSearch, setLoadingSearch] = useState<boolean>(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [installingId, setInstallingId] = useState<string | null>(null);
+  const [installProgressText, setInstallProgressText] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ text: string; type: "success" | "error" } | null>(null);
+  const [pendingInstallItem, setPendingInstallItem] = useState<{
+    item: ModrinthSearchResult;
+    compatible: { version: ModrinthVersion; primaryFile: ModrinthVersionFile };
+    dependencies: ModDependencyItem[];
+  } | null>(null);
+  const [selectedDepProjectIds, setSelectedDepProjectIds] = useState<Set<string>>(new Set());
+
+  const toggleDependency = (projectId: string) => {
+    setSelectedDepProjectIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(projectId)) {
+        next.delete(projectId);
+      } else {
+        next.add(projectId);
+      }
+      return next;
+    });
+  };
+
+  const selectAllDependencies = (deps: ModDependencyItem[]) => {
+    const uninstalledIds = deps.filter((d) => !d.alreadyInstalled).map((d) => d.projectId);
+    setSelectedDepProjectIds(new Set(uninstalledIds));
+  };
+
+  const selectOnlyRequiredDependencies = (deps: ModDependencyItem[]) => {
+    const requiredIds = deps
+      .filter((d) => !d.alreadyInstalled && d.dependencyType === "required")
+      .map((d) => d.projectId);
+    setSelectedDepProjectIds(new Set(requiredIds));
+  };
+
+  // Modal para ver y seleccionar versiones de un mod del catálogo
+  const [versionsModalItem, setVersionsModalItem] = useState<ModrinthSearchResult | null>(null);
+  const [availableVersions, setAvailableVersions] = useState<
+    Array<{
+      version: ModrinthVersion;
+      primaryFile: ModrinthVersionFile;
+      datePublished?: string;
+      versionType?: string;
+    }>
+  >([]);
+  const [loadingVersions, setLoadingVersions] = useState<boolean>(false);
+
+  // Selector de versión para una dependencia en el modal de dependencias
+  const [depVersionPicker, setDepVersionPicker] = useState<{
+    dep: ModDependencyItem;
+    versions: Array<{
+      version: ModrinthVersion;
+      primaryFile: ModrinthVersionFile;
+      datePublished?: string;
+      versionType?: string;
+    }>;
+    loading: boolean;
+  } | null>(null);
+
+  const handleOpenVersionsModal = async (item: ModrinthSearchResult) => {
+    setVersionsModalItem(item);
+    setLoadingVersions(true);
+    setAvailableVersions([]);
+    try {
+      const list = await modrinthService.getProjectVersions(
+        item.projectId,
+        instance.minecraftVersion,
+        instance.loader,
+        contentType
+      );
+      setAvailableVersions(list);
+    } catch (e) {
+      console.error("Error al cargar versiones:", e);
+    } finally {
+      setLoadingVersions(false);
+    }
+  };
+
+  const handleInstallSpecificVersion = async (
+    item: ModrinthSearchResult,
+    vInfo: { version: ModrinthVersion; primaryFile: ModrinthVersionFile }
+  ) => {
+    setVersionsModalItem(null);
+    setInstallingId(item.projectId);
+    setInstallProgressText(t("mods.resolvingDependencies"));
+
+    try {
+      if (contentType === "mod") {
+        const dependencies = await modrinthService.resolveDependencies({
+          version: vInfo.version,
+          minecraftVersion: instance.minecraftVersion,
+          loader: instance.loader,
+          installedFiles: installedItems,
+          projectSlug: item.slug || item.projectId,
+        });
+
+        const uninstalledDeps = dependencies.filter((d) => !d.alreadyInstalled);
+        if (uninstalledDeps.length > 0) {
+          setSelectedDepProjectIds(new Set(uninstalledDeps.map((d) => d.projectId)));
+          setPendingInstallItem({
+            item,
+            compatible: vInfo,
+            dependencies,
+          });
+          setInstallingId(null);
+          setInstallProgressText(null);
+          return;
+        }
+      }
+
+      await executeDirectInstall(item, vInfo);
+    } catch (err) {
+      console.error("Error instalando versión específica:", err);
+      setFeedback({
+        text: t("mods.downloadError", { title: item.title }),
+        type: "error",
+      });
+      setInstallingId(null);
+      setInstallProgressText(null);
+    }
+  };
+
+  const handleOpenDepVersionPicker = async (dep: ModDependencyItem) => {
+    setDepVersionPicker({
+      dep,
+      versions: [],
+      loading: true,
+    });
+    try {
+      const list = await modrinthService.getProjectVersions(
+        dep.projectId,
+        instance.minecraftVersion,
+        instance.loader,
+        "mod"
+      );
+      setDepVersionPicker({
+        dep,
+        versions: list,
+        loading: false,
+      });
+    } catch (e) {
+      console.error("Error al cargar versiones de dependencia:", e);
+      setDepVersionPicker(null);
+    }
+  };
+
+  const handleSelectDepVersion = (
+    dep: ModDependencyItem,
+    selectedV: { version: ModrinthVersion; primaryFile: ModrinthVersionFile }
+  ) => {
+    setDepVersionPicker(null);
+    if (!pendingInstallItem) return;
+
+    const updatedDeps = pendingInstallItem.dependencies.map((d) => {
+      if (d.projectId === dep.projectId) {
+        return {
+          ...d,
+          versionId: selectedV.version.id,
+          versionNumber: selectedV.version.versionNumber,
+          filename: selectedV.primaryFile.filename,
+          downloadUrl: selectedV.primaryFile.url,
+          size: selectedV.primaryFile.size,
+          alreadyInstalled: isModFilenameInstalled(
+            d.slug,
+            d.projectTitle,
+            selectedV.primaryFile.filename,
+            installedItems
+          ),
+        };
+      }
+      return d;
+    });
+
+    setPendingInstallItem({
+      ...pendingInstallItem,
+      dependencies: updatedDeps,
+    });
+  };
 
   // Cargar elementos instalados según la carpeta del tipo de contenido
   const refreshInstalled = async (type: ModrinthProjectType = contentType) => {
@@ -131,29 +320,13 @@ export function ModsModal({ instance, language = "es", onClose, onOpenFolder }: 
     }
   };
 
-  const handleInstall = async (item: ModrinthSearchResult) => {
+  const executeDirectInstall = async (
+    item: ModrinthSearchResult,
+    compatible: { version: ModrinthVersion; primaryFile: ModrinthVersionFile }
+  ) => {
     try {
       setInstallingId(item.projectId);
-      setFeedback(null);
-
-      const compatible = await modrinthService.getCompatibleVersion(
-        item.projectId,
-        instance.minecraftVersion,
-        instance.loader,
-        contentType
-      );
-
-      if (!compatible || !compatible.primaryFile) {
-        setFeedback({
-          text: t("mods.noCompatibleVersion", {
-            title: item.title,
-            version: instance.minecraftVersion,
-          }),
-          type: "error",
-        });
-        return;
-      }
-
+      setInstallProgressText(t("mods.installing"));
       await launcherRepository.installModFromUrl(
         instance.id,
         compatible.primaryFile.url,
@@ -184,8 +357,166 @@ export function ModsModal({ instance, language = "es", onClose, onOpenFolder }: 
       });
     } finally {
       setInstallingId(null);
+      setInstallProgressText(null);
       setTimeout(() => setFeedback(null), 5000);
     }
+  };
+
+  const handleInstall = async (item: ModrinthSearchResult) => {
+    try {
+      setInstallingId(item.projectId);
+      setInstallProgressText(t("mods.installing"));
+      setFeedback(null);
+
+      const compatible = await modrinthService.getCompatibleVersion(
+        item.projectId,
+        instance.minecraftVersion,
+        instance.loader,
+        contentType
+      );
+
+      if (!compatible || !compatible.primaryFile) {
+        setFeedback({
+          text: t("mods.noCompatibleVersion", {
+            title: item.title,
+            version: instance.minecraftVersion,
+          }),
+          type: "error",
+        });
+        setInstallingId(null);
+        setInstallProgressText(null);
+        return;
+      }
+
+      // Si es un mod, comprobar si tiene dependencias requeridas
+      if (contentType === "mod") {
+        setInstallProgressText(t("mods.resolvingDependencies"));
+        try {
+          const dependencies = await modrinthService.resolveDependencies({
+            version: compatible.version,
+            minecraftVersion: instance.minecraftVersion,
+            loader: instance.loader,
+            installedFiles: installedItems,
+            projectSlug: item.slug || item.projectId,
+          });
+
+          const uninstalledDeps = dependencies.filter((d) => !d.alreadyInstalled);
+          if (uninstalledDeps.length > 0) {
+            // Pre-seleccionar todas las dependencias no instaladas
+            setSelectedDepProjectIds(new Set(uninstalledDeps.map((d) => d.projectId)));
+            // Mostrar modal de confirmación con la lista de dependencias
+            setPendingInstallItem({
+              item,
+              compatible,
+              dependencies,
+            });
+            setInstallingId(null);
+            setInstallProgressText(null);
+            return;
+          }
+        } catch (depErr) {
+          console.warn(
+            "No se pudieron resolver dependencias, continuando con instalación directa:",
+            depErr
+          );
+        }
+      }
+
+      // Proceder con la instalación directa del mod principal
+      await executeDirectInstall(item, compatible);
+    } catch (err: unknown) {
+      console.error("Error al instalar:", err);
+      setFeedback({
+        text: t("mods.downloadError", { title: item.title }),
+        type: "error",
+      });
+      setInstallingId(null);
+      setInstallProgressText(null);
+      setTimeout(() => setFeedback(null), 5000);
+    }
+  };
+
+  const handleConfirmInstallAll = async () => {
+    if (!pendingInstallItem) return;
+    const { item, compatible, dependencies } = pendingInstallItem;
+    const depsToInstall = dependencies.filter(
+      (d) => !d.alreadyInstalled && selectedDepProjectIds.has(d.projectId)
+    );
+
+    setPendingInstallItem(null);
+    setInstallingId(item.projectId);
+    setFeedback(null);
+
+    try {
+      const totalSteps = depsToInstall.length + 1;
+      let currentStep = 1;
+
+      // 1. Instalar cada dependencia seleccionada
+      for (const dep of depsToInstall) {
+        setInstallProgressText(
+          t("mods.installingDependency", {
+            name: dep.projectTitle,
+            current: currentStep,
+            total: totalSteps,
+          })
+        );
+        await launcherRepository.installModFromUrl(
+          instance.id,
+          dep.downloadUrl,
+          dep.filename,
+          "mod"
+        );
+        currentStep++;
+      }
+
+      // 2. Instalar el mod principal
+      setInstallProgressText(
+        t("mods.installingDependency", {
+          name: item.title,
+          current: totalSteps,
+          total: totalSteps,
+        })
+      );
+      await launcherRepository.installModFromUrl(
+        instance.id,
+        compatible.primaryFile.url,
+        compatible.primaryFile.filename,
+        "mod"
+      );
+
+      await refreshInstalled("mod");
+
+      setFeedback({
+        text:
+          depsToInstall.length > 0
+            ? t("mods.installSuccessWithDeps", {
+                title: item.title,
+                count: depsToInstall.length,
+              })
+            : t("mods.installSuccessInFolder", {
+                title: item.title,
+                folder: "mods",
+              }),
+        type: "success",
+      });
+    } catch (err) {
+      console.error("Error instalando mod con dependencias:", err);
+      setFeedback({
+        text: t("mods.downloadError", { title: item.title }),
+        type: "error",
+      });
+    } finally {
+      setInstallingId(null);
+      setInstallProgressText(null);
+      setTimeout(() => setFeedback(null), 6000);
+    }
+  };
+
+  const handleInstallModOnly = async () => {
+    if (!pendingInstallItem) return;
+    const { item, compatible } = pendingInstallItem;
+    setPendingInstallItem(null);
+    await executeDirectInstall(item, compatible);
   };
 
   // Comprobar si un elemento ya está instalado
@@ -650,37 +981,499 @@ export function ModsModal({ instance, language = "es", onClose, onOpenFolder }: 
                           ))}
                         </div>
 
-                        <button
-                          type="button"
-                          className={`modrinth-install-btn ${
-                            alreadyInstalled ? "installed" : ""
-                          }`}
-                          onClick={() => handleInstall(item)}
-                          disabled={alreadyInstalled || isInstalling}
-                        >
-                          {isInstalling ? (
-                            <>
-                              <Loader2 size={13} className="animate-spin" />
-                              <span>{t("mods.installing")}</span>
-                            </>
-                          ) : alreadyInstalled ? (
-                            <>
-                              <Check size={13} />
-                              <span>{t("mods.installed")}</span>
-                            </>
-                          ) : (
-                            <>
-                              <Download size={13} />
-                              <span>{t("mods.install")}</span>
-                            </>
-                          )}
-                        </button>
+                        <div className="modrinth-card-actions">
+                          <button
+                            type="button"
+                            className="modrinth-versions-btn"
+                            title={t("mods.viewVersions")}
+                            onClick={() => handleOpenVersionsModal(item)}
+                          >
+                            <History size={12} />
+                            <span>{t("mods.versions")}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            className={`modrinth-install-btn ${
+                              alreadyInstalled ? "installed" : ""
+                            }`}
+                            onClick={() => handleInstall(item)}
+                            disabled={alreadyInstalled || isInstalling}
+                          >
+                            {isInstalling ? (
+                              <>
+                                <Loader2 size={13} className="animate-spin" />
+                                <span>{installProgressText || t("mods.installing")}</span>
+                              </>
+                            ) : alreadyInstalled ? (
+                              <>
+                                <Check size={13} />
+                                <span>{t("mods.installed")}</span>
+                              </>
+                            ) : (
+                              <>
+                                <Download size={13} />
+                                <span>{t("mods.install")}</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
                       </div>
                     </article>
                   );
                 })}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Modal de confirmación y visualización de dependencias */}
+        {pendingInstallItem && (
+          <div
+            className="dependencies-modal-backdrop"
+            onClick={() => setPendingInstallItem(null)}
+          >
+            <div
+              className="dependencies-modal"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="dependencies-modal-header">
+                <div className="dep-header-icon">
+                  <Layers size={22} />
+                </div>
+                <div className="dep-header-text">
+                  <span className="eyebrow">MODRINTH DEPENDENCIES</span>
+                  <h3>{t("mods.dependenciesTitle")}</h3>
+                </div>
+                <button
+                  type="button"
+                  className="ghost-button icon-only dep-close-btn"
+                  onClick={() => setPendingInstallItem(null)}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <p className="dependencies-modal-subtitle">
+                {t("mods.dependenciesSubtitle", {
+                  title: pendingInstallItem.item.title,
+                })}
+              </p>
+
+              <div className="dep-toolbar-row">
+                <span className="dep-toolbar-label">
+                  {t("mods.dependenciesCountBadge", {
+                    count: pendingInstallItem.dependencies.length,
+                  })}
+                </span>
+                <div className="dep-toolbar-actions">
+                  <button
+                    type="button"
+                    className="dep-toolbar-btn"
+                    onClick={() =>
+                      selectAllDependencies(pendingInstallItem.dependencies)
+                    }
+                  >
+                    {t("mods.dependenciesSelectAll")}
+                  </button>
+                  <button
+                    type="button"
+                    className="dep-toolbar-btn"
+                    onClick={() =>
+                      selectOnlyRequiredDependencies(
+                        pendingInstallItem.dependencies
+                      )
+                    }
+                  >
+                    {t("mods.dependenciesOnlyRequired")}
+                  </button>
+                </div>
+              </div>
+
+              <div className="dependencies-list-container">
+                <div className="dep-list">
+                  {pendingInstallItem.dependencies.map((dep) => {
+                    const isSelected =
+                      dep.alreadyInstalled ||
+                      selectedDepProjectIds.has(dep.projectId);
+                    return (
+                      <div
+                        key={dep.projectId}
+                        className={`dep-card ${
+                          dep.alreadyInstalled
+                            ? "installed"
+                            : isSelected
+                            ? "selected"
+                            : "unselected"
+                        }`}
+                        onClick={() => {
+                          if (!dep.alreadyInstalled) {
+                            toggleDependency(dep.projectId);
+                          }
+                        }}
+                      >
+                        <div className="dep-card-select">
+                          <input
+                            type="checkbox"
+                            className="dep-checkbox"
+                            checked={isSelected}
+                            disabled={dep.alreadyInstalled}
+                            onChange={() => {
+                              if (!dep.alreadyInstalled) {
+                                toggleDependency(dep.projectId);
+                              }
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </div>
+                        <div className="dep-card-icon">
+                          {dep.iconUrl ? (
+                            <img
+                              src={dep.iconUrl}
+                              alt={dep.projectTitle}
+                              onError={(e) => {
+                                (e.currentTarget as HTMLElement).style.display =
+                                  "none";
+                              }}
+                            />
+                          ) : (
+                            <Package size={15} />
+                          )}
+                        </div>
+                        <div className="dep-card-info">
+                          <div className="dep-card-title-row">
+                            <span className="dep-card-title">
+                              {dep.projectTitle || dep.slug || dep.filename}
+                            </span>
+                            <div
+                              className="dep-version-picker-wrap"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <button
+                                type="button"
+                                className="dep-version-selector-btn"
+                                onClick={() => {
+                                  if (depVersionPicker?.dep.projectId === dep.projectId) {
+                                    setDepVersionPicker(null);
+                                  } else {
+                                    handleOpenDepVersionPicker(dep);
+                                  }
+                                }}
+                                title={t("mods.changeDepVersion")}
+                              >
+                                <span>v{dep.versionNumber}</span>
+                                <ChevronDown
+                                  size={11}
+                                  className={
+                                    depVersionPicker?.dep.projectId === dep.projectId
+                                      ? "rotate-180"
+                                      : ""
+                                  }
+                                />
+                              </button>
+
+                              {depVersionPicker?.dep.projectId === dep.projectId && (
+                                <div className="dep-version-dropdown">
+                                  <div className="dep-version-dropdown-header">
+                                    <span>{t("mods.changeDepVersion")}</span>
+                                    <button
+                                      type="button"
+                                      className="ghost-button icon-only close-dropdown-btn"
+                                      onClick={() => setDepVersionPicker(null)}
+                                    >
+                                      <X size={12} />
+                                    </button>
+                                  </div>
+                                  {depVersionPicker.loading ? (
+                                    <div className="dep-version-dropdown-loading">
+                                      <Loader2 size={14} className="animate-spin" />
+                                      <span>{t("mods.loadingVersions")}</span>
+                                    </div>
+                                  ) : depVersionPicker.versions.length === 0 ? (
+                                    <div className="dep-version-dropdown-empty">
+                                      {t("mods.noCompatibleVersionsFound")}
+                                    </div>
+                                  ) : (
+                                    <div className="dep-version-dropdown-list">
+                                      {depVersionPicker.versions.map((vObj) => {
+                                        const isCurrent = vObj.version.id === dep.versionId;
+                                        const isInst = installedItems.some(
+                                          (inst) =>
+                                            inst.filename.toLowerCase() ===
+                                            vObj.primaryFile.filename.toLowerCase()
+                                        );
+                                        return (
+                                          <button
+                                            key={vObj.version.id}
+                                            type="button"
+                                            className={`dep-version-dropdown-item ${
+                                              isCurrent ? "current" : ""
+                                            }`}
+                                            onClick={() =>
+                                              handleSelectDepVersion(dep, vObj)
+                                            }
+                                          >
+                                            <div className="dep-version-item-info">
+                                              <span className="dep-v-num">
+                                                v{vObj.version.versionNumber}
+                                              </span>
+                                              <span className="dep-v-name">
+                                                {vObj.primaryFile.filename}
+                                              </span>
+                                            </div>
+                                            <div className="dep-v-meta">
+                                              {vObj.versionType && (
+                                                <span
+                                                  className={`dep-v-type ${vObj.versionType}`}
+                                                >
+                                                  {vObj.versionType}
+                                                </span>
+                                              )}
+                                              {isInst && (
+                                                <span className="dep-v-installed-tag">
+                                                  {t("mods.statusInstalled")}
+                                                </span>
+                                              )}
+                                              {isCurrent && (
+                                                <Check
+                                                  size={12}
+                                                  className="dep-v-check"
+                                                />
+                                              )}
+                                            </div>
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                            <span className={`dep-type-badge ${dep.dependencyType}`}>
+                              {dep.dependencyType === "required"
+                                ? t("mods.dependenciesRequired")
+                                : t("mods.dependenciesOptional")}
+                            </span>
+                          </div>
+                          <span className="dep-card-filename">{dep.filename}</span>
+                        </div>
+                        <div className="dep-card-badge-wrap">
+                          {dep.alreadyInstalled ? (
+                            <span className="dep-status-badge installed" title={t("mods.statusInstalled")}>
+                              <Check size={9.5} />
+                              <span>{t("mods.statusInstalled")}</span>
+                            </span>
+                          ) : isSelected ? (
+                            <span className="dep-status-badge will-download" title={t("mods.statusWillDownload")}>
+                              <Download size={9.5} />
+                              <span>{t("mods.statusWillDownload")}</span>
+                            </span>
+                          ) : (
+                            <span className="dep-status-badge skipped" title={t("mods.statusSkipped")}>
+                              <span>{t("mods.statusSkipped")}</span>
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="dependencies-modal-actions">
+                <button
+                  type="button"
+                  className="dep-cancel-btn"
+                  onClick={() => setPendingInstallItem(null)}
+                >
+                  {t("mods.cancel")}
+                </button>
+                <div className="dep-actions-right">
+                  <button
+                    type="button"
+                    className="dep-secondary-btn"
+                    onClick={handleInstallModOnly}
+                  >
+                    {t("mods.installModOnly", {
+                      title: pendingInstallItem.item.title,
+                    })}
+                  </button>
+                  <button
+                    type="button"
+                    className="primary-button dep-confirm-btn"
+                    onClick={handleConfirmInstallAll}
+                  >
+                    <Download size={14} />
+                    <span>
+                      {t("mods.installSelectedWithDeps", {
+                        count:
+                          pendingInstallItem.dependencies.filter(
+                            (d) =>
+                              !d.alreadyInstalled &&
+                              selectedDepProjectIds.has(d.projectId)
+                          ).length + 1,
+                      })}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de selección de versiones de un mod del catálogo */}
+        {versionsModalItem && (
+          <div
+            className="dependencies-modal-backdrop"
+            onClick={() => setVersionsModalItem(null)}
+          >
+            <div
+              className="dependencies-modal versions-modal"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="dependencies-modal-header">
+                <div className="dep-header-icon">
+                  <History size={22} />
+                </div>
+                <div className="dep-header-text">
+                  <span className="eyebrow">{t("mods.versions")}</span>
+                  <h3>
+                    {t("mods.versionsTitle", {
+                      title: versionsModalItem.title,
+                    })}
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  className="ghost-button icon-only dep-close-btn"
+                  onClick={() => setVersionsModalItem(null)}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <p className="dependencies-modal-subtitle">
+                {t("mods.versionsSubtitle", {
+                  version: instance.minecraftVersion,
+                  loader: instance.loader,
+                })}
+              </p>
+
+              <div className="dependencies-list-container versions-list-container">
+                {loadingVersions ? (
+                  <div className="mods-loading-state">
+                    <Loader2 size={28} className="animate-spin" />
+                    <p>{t("mods.loadingVersions")}</p>
+                  </div>
+                ) : availableVersions.length === 0 ? (
+                  <div className="mods-empty-state">
+                    <AlertTriangle size={32} />
+                    <p>{t("mods.noCompatibleVersionsFound")}</p>
+                  </div>
+                ) : (
+                  <div className="versions-list">
+                    {availableVersions.map((vObj) => {
+                      const isInst = installedItems.some(
+                        (inst) =>
+                          inst.filename.toLowerCase() ===
+                          vObj.primaryFile.filename.toLowerCase()
+                      );
+                      const isInstalling =
+                        installingId === versionsModalItem.projectId;
+
+                      return (
+                        <div
+                          key={vObj.version.id}
+                          className={`version-item-card ${
+                            isInst ? "installed" : ""
+                          }`}
+                        >
+                          <div className="version-item-details">
+                            <div className="version-item-title-row">
+                              <span className="version-item-number">
+                                v{vObj.version.versionNumber}
+                              </span>
+                              {vObj.version.name &&
+                                vObj.version.name !==
+                                  vObj.version.versionNumber && (
+                                  <span className="version-item-name">
+                                    {vObj.version.name}
+                                  </span>
+                                )}
+                              {vObj.versionType && (
+                                <span
+                                  className={`version-tag-type ${vObj.versionType}`}
+                                >
+                                  {vObj.versionType === "release"
+                                    ? t("mods.releaseTypeRelease")
+                                    : vObj.versionType === "beta"
+                                    ? t("mods.releaseTypeBeta")
+                                    : t("mods.releaseTypeAlpha")}
+                                </span>
+                              )}
+                            </div>
+                            <div className="version-item-meta">
+                              <span className="version-filename">
+                                {vObj.primaryFile.filename}
+                              </span>
+                              <span className="version-size">
+                                • {formatFileSize(vObj.primaryFile.size)}
+                              </span>
+                              {vObj.datePublished && (
+                                <span className="version-date">
+                                  •{" "}
+                                  {new Date(
+                                    vObj.datePublished
+                                  ).toLocaleDateString()}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="version-item-action">
+                            {isInst ? (
+                              <span className="dep-status-badge installed">
+                                <Check size={11} />
+                                <span>{t("mods.installed")}</span>
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                className="primary-button version-install-btn"
+                                onClick={() =>
+                                  handleInstallSpecificVersion(
+                                    versionsModalItem,
+                                    vObj
+                                  )
+                                }
+                                disabled={isInstalling}
+                              >
+                                {isInstalling ? (
+                                  <Loader2 size={13} className="animate-spin" />
+                                ) : (
+                                  <Download size={13} />
+                                )}
+                                <span>{t("mods.installThisVersion")}</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className="dependencies-modal-actions">
+                <button
+                  type="button"
+                  className="dep-cancel-btn"
+                  onClick={() => setVersionsModalItem(null)}
+                >
+                  {t("mods.cancel")}
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>

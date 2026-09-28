@@ -2,7 +2,7 @@
   "name": "KatoApp",
   "titlePrefix": "Kato",
   "titleSuffix": "Launcher",
-  "version": "0.3.0-alpha",
+  "version": "0.4.0-alpha",
   "tag": "ALPHA",
   "description": "Launcher ligero y modular para Minecraft con soporte de modloaders y perfiles locales.",
   "website": "https://www.youtube.com/@katolabs-dev",
