@@ -23,6 +23,8 @@ pub struct GameInstance {
     pub loader: String,
     pub profile_id: String,
     pub created_at: String,
+    #[serde(default)]
+    pub ram_gb: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
