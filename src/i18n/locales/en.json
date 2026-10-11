@@ -64,7 +64,18 @@
     "loaderLabel": "Mod Loader",
     "profileLabel": "Assigned Offline Profile",
     "cancel": "Cancel",
-    "submit": "Create Instance"
+    "submit": "Create Instance",
+    "searchVersionPlaceholder": "Search version (e.g. 1.21, 24w...)",
+    "filterReleases": "Releases",
+    "filterSnapshots": "Snapshots",
+    "filterAll": "All",
+    "filterPopular": "Popular",
+    "releaseType": "Official Release",
+    "snapshotType": "Snapshot",
+    "noVersionsFound": "No matching versions found",
+    "selectVersionPrompt": "Select version...",
+    "changeVersion": "Change",
+    "supportedLoaders": "Supported loaders"
   },
   "profiles": {
     "eyebrow": "PLAYER MANAGEMENT",

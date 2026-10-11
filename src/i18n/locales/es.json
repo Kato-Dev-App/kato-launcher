@@ -64,7 +64,18 @@
     "loaderLabel": "Mod Loader",
     "profileLabel": "Perfil Offline Asignado",
     "cancel": "Cancelar",
-    "submit": "Crear Instancia"
+    "submit": "Crear Instancia",
+    "searchVersionPlaceholder": "Buscar versión (ej. 1.21, 24w...)",
+    "filterReleases": "Releases",
+    "filterSnapshots": "Snapshots",
+    "filterAll": "Todas",
+    "filterPopular": "Populares",
+    "releaseType": "Release oficial",
+    "snapshotType": "Snapshot",
+    "noVersionsFound": "No se encontraron versiones",
+    "selectVersionPrompt": "Seleccionar versión...",
+    "changeVersion": "Cambiar",
+    "supportedLoaders": "Loaders compatibles"
   },
   "profiles": {
     "eyebrow": "GESTIÓN DE JUGADORES",

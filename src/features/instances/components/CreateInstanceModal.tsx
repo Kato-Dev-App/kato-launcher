@@ -3,9 +3,9 @@ import { CircleAlert, Plus } from "lucide-react";
 import type { GameVersion, Loader, OfflineProfile } from "../../../domain/models";
 import {
   ALL_LOADERS,
-  POPULAR_VERSIONS,
   checkLoaderCompatibility,
 } from "../../../domain/loaders";
+import { VersionSelector } from "./VersionSelector";
 
 interface CreateInstanceModalProps {
   isOpen: boolean;
@@ -83,7 +83,7 @@ export function CreateInstanceModal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <form className="modal" onSubmit={handleSubmit}>
+      <form className="modal create-instance-modal" onSubmit={handleSubmit}>
         <div className="modal-title">
           <div>
             <div className="eyebrow">{t("instances.eyebrow")}</div>
@@ -108,35 +108,16 @@ export function CreateInstanceModal({
         </label>
 
         <div className="form-group" style={{ marginBottom: 15 }}>
-          <label style={{ marginBottom: 4 }}>
+          <label style={{ marginBottom: 6 }}>
             {t("instanceModal.versionLabel")}
-            <input
-              required
-              value={version}
-              onChange={(e) => handleVersionChange(e.target.value)}
-              placeholder="1.21.4"
-              list="cached-versions"
-            />
-            <datalist id="cached-versions">
-              {versions.map((item) => (
-                <option key={item.id} value={item.id} />
-              ))}
-            </datalist>
           </label>
-
-          {/* Accesos rápidos a versiones populares */}
-          <div className="version-quick-chips">
-            {POPULAR_VERSIONS.map((pv) => (
-              <button
-                key={pv.id}
-                type="button"
-                className={`quick-chip ${version === pv.id ? "active" : ""}`}
-                onClick={() => handleVersionChange(pv.id)}
-              >
-                {pv.label}
-              </button>
-            ))}
-          </div>
+          <VersionSelector
+            versions={versions}
+            selectedVersion={version}
+            selectedLoader={loader}
+            onSelectVersion={handleVersionChange}
+            t={t}
+          />
         </div>
 
         {/* Selector de Loader con validación de compatibilidad */}
