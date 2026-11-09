@@ -30,7 +30,8 @@ export function checkLoaderCompatibility(
     versionType === "snapshot" ||
     /^\d{2}w\d{2}[a-z]$/i.test(clean) ||
     clean.includes("-pre") ||
-    clean.includes("-rc");
+    clean.includes("-rc") ||
+    clean.includes("-snapshot");
 
   const match = clean.match(/^(\d+)\.(\d+)(?:\.(\d+))?/);
   const major = match ? parseInt(match[1], 10) : 0;
@@ -43,12 +44,12 @@ export function checkLoaderCompatibility(
   };
 
   // 2. Fabric:
-  // Requiere Minecraft >= 1.14 o snapshots desde 2019 (18w43a+ / 19w+)
+  // Requiere Minecraft >= 1.14 o snapshots modernas (18w43a+ / 19w+ / 26.x)
   let fabricSupported = false;
   let fabricReason: string | undefined;
 
   if (match) {
-    if (major === 1 && minor >= 14) {
+    if (major > 1 || (major === 1 && minor >= 14)) {
       fabricSupported = true;
     } else {
       fabricReason = "Fabric solo es compatible con Minecraft 1.14 o superior.";
@@ -56,7 +57,7 @@ export function checkLoaderCompatibility(
   } else if (isSnapshot) {
     const snapMatch = clean.match(/^(\d{2})w/i);
     const snapYear = snapMatch ? parseInt(snapMatch[1], 10) : 0;
-    if (snapYear >= 19) {
+    if (snapYear >= 19 || clean.includes("-snapshot") || clean.includes("-pre") || clean.includes("-rc")) {
       fabricSupported = true;
     } else {
       fabricReason = "Fabric no tiene soporte para snapshots anteriores a 1.14.";
@@ -66,7 +67,7 @@ export function checkLoaderCompatibility(
   }
 
   // 3. Forge:
-  // Compatible con versiones estables desde 1.1 hasta 1.20+.
+  // Compatible con versiones estables oficiales desde 1.1.
   // No tiene soporte para snapshots de desarrollo.
   let forgeSupported = false;
   let forgeReason: string | undefined;
@@ -74,7 +75,7 @@ export function checkLoaderCompatibility(
   if (isSnapshot) {
     forgeReason = "Forge no soporta snapshots de desarrollo.";
   } else if (match) {
-    if (major === 1 && minor >= 1) {
+    if (major > 1 || (major === 1 && minor >= 1)) {
       forgeSupported = true;
     } else {
       forgeReason = "Forge requiere Minecraft 1.1 o superior.";
@@ -84,14 +85,14 @@ export function checkLoaderCompatibility(
   }
 
   // 4. NeoForge:
-  // Nació en Minecraft 1.20.2 y continúa en 1.20.4, 1.20.6, 1.21+
+  // Nació en Minecraft 1.20.2 y continúa en versiones oficiales 1.20.4, 1.20.6, 1.21+ y 26.x+
   let neoForgeSupported = false;
   let neoForgeReason: string | undefined;
 
   if (isSnapshot) {
     neoForgeReason = "NeoForge está optimizado para versiones oficiales de release.";
   } else if (match) {
-    if (major === 1 && (minor > 20 || (minor === 20 && patch >= 2))) {
+    if (major > 1 || (major === 1 && (minor > 20 || (minor === 20 && patch >= 2)))) {
       neoForgeSupported = true;
     } else {
       neoForgeReason = "NeoForge solo existe para Minecraft 1.20.2 o superior.";

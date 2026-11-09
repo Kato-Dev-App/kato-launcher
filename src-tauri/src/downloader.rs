@@ -1748,7 +1748,12 @@ pub async fn prepare_and_download_all(
                         "21.1.".to_string()
                     }
                 } else {
-                    "21.1.".to_string()
+                    let parts: Vec<&str> = mc_version.split('.').collect();
+                    if parts.len() >= 2 {
+                        format!("{}.{}.", parts[0], parts[1])
+                    } else {
+                        format!("{}.", parts[0])
+                    }
                 };
 
                 let best_neo = versions_arr
