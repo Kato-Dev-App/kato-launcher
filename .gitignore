@@ -49,5 +49,6 @@ Thumbs.db
 # AI & Agent local dirs
 .agents/
 
-# Videos & HyperFrames
+# Videos, Audio & HyperFrames
 videos/
+audio/
