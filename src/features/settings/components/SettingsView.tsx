@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, Coffee, ExternalLink, Globe, HardDrive, RefreshCw, Settings2 } from "lucide-react";
+import { Check, Coffee, ExternalLink, Globe, HardDrive, RefreshCw } from "lucide-react";
 import type { GameInstance, GameVersion, OfflineProfile } from "../../../domain/models";
 import { LAUNCHER_CONFIG } from "../../../config/launcherConfig";
 import { AVAILABLE_LANGUAGES, type Language } from "../../../i18n";
@@ -38,147 +38,148 @@ export function SettingsView({
 
   return (
     <>
-      <section className="welcome-row">
+      <div className="section-heading">
         <div>
-          <div className="eyebrow">
-            <Settings2 size={14} /> {t("settings.eyebrow")}
-          </div>
-          <h1>{t("settings.title")}</h1>
-          <p className="subtitle">{t("settings.subtitle")}</p>
+          <h2>{t("settings.title")}</h2>
+          <p>{t("settings.subtitle")}</p>
         </div>
-      </section>
+      </div>
 
       <section className="settings-section">
-        {/* Selector de Idiomas */}
-        <div className="settings-box">
-          <h3>
-            <Globe size={16} style={{ verticalAlign: "middle", marginRight: 8 }} />
-            {t("settings.languageTitle")}
-          </h3>
-          <p>{t("settings.languageDesc")}</p>
-          <div className="language-selector-group">
-            {AVAILABLE_LANGUAGES.map((lang) => {
-              const isSelected = currentLang === lang.code;
-              return (
-                <button
-                  key={lang.code}
-                  type="button"
-                  className={`language-chip ${isSelected ? "selected" : ""}`}
-                  onClick={() => onChangeLanguage(lang.code)}
-                >
-                  <span className="lang-badge">{lang.short}</span>
-                  <span className="lang-name">{lang.label}</span>
-                  {isSelected && <Check size={15} className="lang-check" />}
-                </button>
-              );
-            })}
+        <div className="settings-col">
+          {/* Selector de Idiomas */}
+          <div className="settings-box">
+            <h3>
+              <Globe size={16} style={{ verticalAlign: "middle", marginRight: 8 }} />
+              {t("settings.languageTitle")}
+            </h3>
+            <p>{t("settings.languageDesc")}</p>
+            <div className="language-selector-group">
+              {AVAILABLE_LANGUAGES.map((lang) => {
+                const isSelected = currentLang === lang.code;
+                return (
+                  <button
+                    key={lang.code}
+                    type="button"
+                    className={`language-chip ${isSelected ? "selected" : ""}`}
+                    onClick={() => onChangeLanguage(lang.code)}
+                  >
+                    <span className="lang-badge">{lang.short}</span>
+                    <span className="lang-name">{lang.label}</span>
+                    {isSelected && <Check size={15} className="lang-check" />}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
 
-        {/* Acerca del Launcher */}
-        <div className="settings-box">
-          <h3>{t("settings.aboutTitle")}</h3>
-          <p>{t("settings.aboutDesc")}</p>
-          <div className="settings-row">
-            <div>
-              <div className="settings-row-title">{t("settings.version")}</div>
-              <div className="settings-row-desc">
-                {LAUNCHER_CONFIG.name} {displayVersion}
-              </div>
-            </div>
-            <span className="settings-badge">{displayVersion}</span>
-          </div>
-          <div className="settings-row">
-            <div>
-              <div className="settings-row-title">{t("settings.instanceLimit")}</div>
-              <div className="settings-row-desc">{t("settings.instanceLimitDesc")}</div>
-            </div>
-            <span className="settings-badge">
-              {instances.length} / {maxInstances}
-            </span>
-          </div>
-          <div className="settings-row">
-            <div>
-              <div className="settings-row-title">{t("settings.profileLimit")}</div>
-              <div className="settings-row-desc">{t("settings.profileLimitDesc")}</div>
-            </div>
-            <span className="settings-badge">
-              {profiles.length} / {maxProfiles}
-            </span>
-          </div>
-          <div className="settings-row">
-            <div>
-              <div className="settings-row-title">{t("settings.backend")}</div>
-              <div className="settings-row-desc">
-                Tauri v{LAUNCHER_CONFIG.tauriVersion} + Rust Core
-              </div>
-            </div>
-            <span className="settings-badge">Tauri {LAUNCHER_CONFIG.tauriVersion}</span>
-          </div>
-          <div className="settings-row">
-            <div>
-              <div className="settings-row-title">{t("settings.localStorage")}</div>
-              <div className="settings-row-desc">{t("settings.localStorageDesc")}</div>
-            </div>
-            <span className="settings-badge">
-              <HardDrive size={12} style={{ verticalAlign: "middle", marginRight: 4 }} />
-              {t("settings.local")}
-            </span>
-          </div>
-          {LAUNCHER_CONFIG.website && (
+          {/* Catálogo de versiones Mojang */}
+          <div className="settings-box">
+            <h3>{t("settings.catalogTitle")}</h3>
+            <p>{t("settings.catalogDesc")}</p>
             <div className="settings-row">
               <div>
-                <div className="settings-row-title">{t("settings.website")}</div>
-                <div className="settings-row-desc">{LAUNCHER_CONFIG.website}</div>
+                <div className="settings-row-title">{t("settings.cachedVersions")}</div>
+                <div className="settings-row-desc">
+                  {versions.length} {t("settings.cachedVersions").toLowerCase()} ({releaseCount}{" "}
+                  {t("settings.official")})
+                  {versionsUpdatedAt &&
+                    ` · ${t("settings.synchronized")} ${new Date(
+                      versionsUpdatedAt
+                    ).toLocaleTimeString()}`}
+                </div>
               </div>
               <button
                 type="button"
-                className="secondary-button compact"
-                onClick={() => launcherRepository.openUrl(LAUNCHER_CONFIG.website)}
-                title={LAUNCHER_CONFIG.website}
+                className="secondary-button"
+                onClick={onUpdateVersions}
+                disabled={busy}
               >
-                <ExternalLink size={12} /> Visitar
+                <RefreshCw size={14} className={busy ? "spin" : ""} />
+                {busy ? t("settings.synchronizing") : t("settings.refreshCatalog")}
               </button>
             </div>
-          )}
-          <div className="settings-row">
-            <div>
-              <div className="settings-row-title">{t("settings.disclaimerTitle")}</div>
-              <div className="settings-row-desc">{t("footer.mojangDisclaimer")}</div>
-            </div>
           </div>
+
+          {/* Entornos Java y Runtimes Portables */}
+          <JavaSettingsBox />
         </div>
 
-        {/* Catálogo de versiones Mojang */}
-        <div className="settings-box">
-          <h3>{t("settings.catalogTitle")}</h3>
-          <p>{t("settings.catalogDesc")}</p>
-          <div className="settings-row">
-            <div>
-              <div className="settings-row-title">{t("settings.cachedVersions")}</div>
-              <div className="settings-row-desc">
-                {versions.length} {t("settings.cachedVersions").toLowerCase()} ({releaseCount}{" "}
-                {t("settings.official")})
-                {versionsUpdatedAt &&
-                  ` · ${t("settings.synchronized")} ${new Date(
-                    versionsUpdatedAt
-                  ).toLocaleTimeString()}`}
+        <div className="settings-col">
+          {/* Acerca del Launcher */}
+          <div className="settings-box">
+            <h3>{t("settings.aboutTitle")}</h3>
+            <p>{t("settings.aboutDesc")}</p>
+            <div className="settings-row">
+              <div>
+                <div className="settings-row-title">{t("settings.version")}</div>
+                <div className="settings-row-desc">
+                  {LAUNCHER_CONFIG.name} {displayVersion}
+                </div>
+              </div>
+              <span className="settings-badge">{displayVersion}</span>
+            </div>
+            <div className="settings-row">
+              <div>
+                <div className="settings-row-title">{t("settings.instanceLimit")}</div>
+                <div className="settings-row-desc">{t("settings.instanceLimitDesc")}</div>
+              </div>
+              <span className="settings-badge">
+                {instances.length} / {maxInstances}
+              </span>
+            </div>
+            <div className="settings-row">
+              <div>
+                <div className="settings-row-title">{t("settings.profileLimit")}</div>
+                <div className="settings-row-desc">{t("settings.profileLimitDesc")}</div>
+              </div>
+              <span className="settings-badge">
+                {profiles.length} / {maxProfiles}
+              </span>
+            </div>
+            <div className="settings-row">
+              <div>
+                <div className="settings-row-title">{t("settings.backend")}</div>
+                <div className="settings-row-desc">
+                  Tauri v{LAUNCHER_CONFIG.tauriVersion} + Rust Core
+                </div>
+              </div>
+              <span className="settings-badge">Tauri {LAUNCHER_CONFIG.tauriVersion}</span>
+            </div>
+            <div className="settings-row">
+              <div>
+                <div className="settings-row-title">{t("settings.localStorage")}</div>
+                <div className="settings-row-desc">{t("settings.localStorageDesc")}</div>
+              </div>
+              <span className="settings-badge">
+                <HardDrive size={12} style={{ verticalAlign: "middle", marginRight: 4 }} />
+                {t("settings.local")}
+              </span>
+            </div>
+            {LAUNCHER_CONFIG.website && (
+              <div className="settings-row">
+                <div>
+                  <div className="settings-row-title">{t("settings.website")}</div>
+                  <div className="settings-row-desc">{LAUNCHER_CONFIG.website}</div>
+                </div>
+                <button
+                  type="button"
+                  className="secondary-button compact"
+                  onClick={() => launcherRepository.openUrl(LAUNCHER_CONFIG.website)}
+                  title={LAUNCHER_CONFIG.website}
+                >
+                  <ExternalLink size={12} /> Visitar
+                </button>
+              </div>
+            )}
+            <div className="settings-row">
+              <div>
+                <div className="settings-row-title">{t("settings.disclaimerTitle")}</div>
+                <div className="settings-row-desc">{t("footer.mojangDisclaimer")}</div>
               </div>
             </div>
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={onUpdateVersions}
-              disabled={busy}
-            >
-              <RefreshCw size={14} className={busy ? "spin" : ""} />
-              {busy ? t("settings.synchronizing") : t("settings.refreshCatalog")}
-            </button>
           </div>
         </div>
-
-        {/* Entornos Java y Runtimes Portables */}
-        <JavaSettingsBox />
       </section>
     </>
   );

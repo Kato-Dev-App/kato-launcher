@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.3.0--alpha-purple.svg" alt="Versión 0.3.0-alpha" />
+  <img src="https://img.shields.io/badge/version-0.4.0--alpha-purple.svg" alt="Versión 0.4.0-alpha" />
   <img src="https://img.shields.io/badge/Tauri-v2-blue.svg" alt="Tauri v2" />
   <img src="https://img.shields.io/badge/React-19-cyan.svg" alt="React 19" />
   <img src="https://img.shields.io/badge/Rust-2021-orange.svg" alt="Rust Core" />

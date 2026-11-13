@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CircleHelp, ExternalLink, Plus, Sparkles } from "lucide-react";
+import { ExternalLink } from "lucide-react";
 import {
   EMPTY_STATE,
   type AvatarVariant,
@@ -25,8 +25,7 @@ import { InstanceSettingsModal } from "../features/instances/components/Instance
 
 // Componentes Compartidos
 import { ConfirmModal, type ConfirmState } from "../shared/components/ConfirmModal";
-import { SidebarNav, type NavTab } from "../shared/components/SidebarNav";
-import { StatsGrid } from "../shared/components/StatsGrid";
+import { TopNav, type NavTab } from "../shared/components/TopNav";
 
 const MAX_INSTANCES = LAUNCHER_CONFIG.maxInstances;
 const MAX_PROFILES = LAUNCHER_CONFIG.maxProfiles ?? 4;
@@ -156,11 +155,6 @@ export default function App() {
       item.name.toLowerCase().includes(instanceFilter.toLowerCase())
     );
   }, [state.instances, instanceFilter]);
-
-  const releaseCount = useMemo(
-    () => state.versions.filter((item) => item.type === "release").length,
-    [state.versions]
-  );
 
   const isInstanceLimitReached = state.instances.length >= MAX_INSTANCES;
   const isProfileLimitReached = state.profiles.length >= MAX_PROFILES;
@@ -430,103 +424,42 @@ export default function App() {
   return (
     <>
       <div className="app-shell">
-        <SidebarNav
+        <TopNav
           currentTab={tab}
           instancesCount={state.instances.length}
           maxInstances={MAX_INSTANCES}
           activeProfile={activeProfile}
           displayVersion={displayVersion}
+          isInstanceLimitReached={isInstanceLimitReached}
           t={t}
           onTabChange={setTab}
+          onOpenCreateInstance={handleOpenInstanceDialog}
           onExitProfile={exitProfile}
           onOpenWebsite={() => launcherRepository.openUrl(LAUNCHER_CONFIG.website)}
+          onAboutClick={() => setNotice(t("settings.aboutDesc"))}
         />
 
         <main className="main-content">
-          <header className="topbar">
-            <div className="breadcrumb">
-              {LAUNCHER_CONFIG.name} <span>/</span>{" "}
-              <b>{tab === "instances" ? t("instances.title") : t("settings.title")}</b>
-            </div>
-            <div className="top-actions">
-              <span className="local-label">
-                <span />
-                {t("settings.local")}
-              </span>
-              <button
-                className="icon-button"
-                title={t("settings.aboutTitle")}
-                onClick={() => setNotice(t("settings.aboutDesc"))}
-              >
-                <CircleHelp size={18} />
-              </button>
-            </div>
-          </header>
-
           {tab === "instances" && (
-            <>
-              <section className="welcome-row">
-                <div>
-                  <div className="eyebrow">
-                    <Sparkles size={14} /> {t("instances.eyebrow")}
-                  </div>
-                  <h1>{t("instances.title")}</h1>
-                  <p className="subtitle">{t("instances.subtitle")}</p>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  {isInstanceLimitReached && (
-                    <span className="limit-pill">
-                      <AlertTriangle size={13} /> {t("instances.limitReached")} ({MAX_INSTANCES}/{MAX_INSTANCES})
-                    </span>
-                  )}
-                  <button
-                    className="primary-button"
-                    onClick={handleOpenInstanceDialog}
-                    disabled={isInstanceLimitReached}
-                    title={
-                      isInstanceLimitReached
-                        ? `${t("instances.limitReached")} (${MAX_INSTANCES})`
-                        : t("instances.newInstance")
-                    }
-                  >
-                    <Plus size={18} /> {t("instances.newInstance")}
-                  </button>
-                </div>
-              </section>
-
-              <StatsGrid
-                instances={state.instances}
-                maxInstances={MAX_INSTANCES}
-                versionsCount={state.versions.length}
-                releaseCount={releaseCount}
-                versionsUpdatedAt={state.versionsUpdatedAt}
-                activeProfile={activeProfile}
-                ready={ready}
-                busy={busy}
-                t={t}
-                onExitProfile={exitProfile}
-              />
-
-              <InstanceGrid
-                instances={state.instances}
-                shownInstances={shownInstances}
-                instanceFilter={instanceFilter}
-                ready={ready}
-                busy={busy}
-                profileFor={profileFor}
-                t={t}
-                onFilterChange={setInstanceFilter}
-                onUpdateVersions={updateVersions}
-                onOpenCreateDialog={handleOpenInstanceDialog}
-                onLaunch={launch}
-                onOpenFolder={(inst) => openFolder(inst.id, inst.name)}
-                onOpenLogs={(inst) => setLogsModalInstance(inst)}
-                onOpenSettings={(inst) => setSettingsModalInstance(inst)}
-                onOpenMods={(inst) => setModsModalInstance(inst)}
-                onPromptDelete={promptDeleteInstance}
-                onUpdateRam={handleUpdateInstanceRam}
-              />
-            </>
+            <InstanceGrid
+              instances={state.instances}
+              shownInstances={shownInstances}
+              instanceFilter={instanceFilter}
+              ready={ready}
+              busy={busy}
+              profileFor={profileFor}
+              t={t}
+              onFilterChange={setInstanceFilter}
+              onUpdateVersions={updateVersions}
+              onOpenCreateDialog={handleOpenInstanceDialog}
+              onLaunch={launch}
+              onOpenFolder={(inst) => openFolder(inst.id, inst.name)}
+              onOpenLogs={(inst) => setLogsModalInstance(inst)}
+              onOpenSettings={(inst) => setSettingsModalInstance(inst)}
+              onOpenMods={(inst) => setModsModalInstance(inst)}
+              onPromptDelete={promptDeleteInstance}
+              onUpdateRam={handleUpdateInstanceRam}
+            />
           )}
 
           {tab === "settings" && (
