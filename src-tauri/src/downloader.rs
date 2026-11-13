@@ -1122,6 +1122,19 @@ fn load_custom_version_json(
         for arg in extract_args_from_json(args_obj.get("game")) {
             extra_game_args.push(replace_arg_placeholders(&arg, instance_dir, app_data, mc_version));
         }
+    } else if let Some(mc_args) = parsed.get("minecraftArguments").and_then(|a| a.as_str()) {
+        // Instaladores Forge legacy (<= 1.12.2) usan minecraftArguments en lugar de arguments.game
+        let tokens: Vec<&str> = mc_args.split_whitespace().collect();
+        let mut i = 0;
+        while i < tokens.len() {
+            if (tokens[i] == "--tweakClass" || tokens[i] == "--versionType") && i + 1 < tokens.len() {
+                extra_game_args.push(tokens[i].to_string());
+                extra_game_args.push(tokens[i + 1].to_string());
+                i += 2;
+                continue;
+            }
+            i += 1;
+        }
     }
 
     if let Some(libs_arr) = parsed.get("libraries").and_then(|l| l.as_array()) {
@@ -1265,6 +1278,128 @@ pub struct PreparedLaunch {
     pub java_binary: String,
     pub is_lwjgl3: bool,
     pub java_major: u32,
+}
+
+async fn try_install_legacy_forge(
+    client: &reqwest::Client,
+    installer_jar: &Path,
+    instance_dir: &Path,
+    app_data: &Path,
+) -> Result<bool, String> {
+    use std::io::Read;
+
+    let profile_json_str = {
+        let file = std::fs::File::open(installer_jar)
+            .map_err(|e| format!("No se pudo abrir forge-installer.jar: {e}"))?;
+        let mut archive = zip::ZipArchive::new(file)
+            .map_err(|e| format!("Archivo forge-installer.jar inválido: {e}"))?;
+        let Ok(mut entry) = archive.by_name("install_profile.json") else {
+            return Ok(false);
+        };
+        let mut buf = String::new();
+        entry
+            .read_to_string(&mut buf)
+            .map_err(|e| format!("No se pudo leer install_profile.json: {e}"))?;
+        buf
+    };
+
+    let profile: serde_json::Value = serde_json::from_str(&profile_json_str)
+        .map_err(|e| format!("install_profile.json inválido: {e}"))?;
+
+    let (Some(install_obj), Some(version_info)) = (profile.get("install"), profile.get("versionInfo")) else {
+        // Formato moderno (MC 1.13+): usar --installClient normalmente
+        return Ok(false);
+    };
+
+    // 1. Extraer el JAR universal empaquetado dentro del installer.jar
+    let bundled_file = install_obj
+        .get("filePath")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "install_profile.json legacy sin campo 'filePath'".to_string())?;
+    let maven_coord = install_obj
+        .get("path")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "install_profile.json legacy sin campo 'path'".to_string())?;
+    let (_, universal_rel_path) = parse_maven_coord(maven_coord)
+        .ok_or_else(|| format!("Coordenada Maven inválida en Forge legacy: {maven_coord}"))?;
+
+    {
+        let file = std::fs::File::open(installer_jar).map_err(|e| e.to_string())?;
+        let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+        let mut jar_entry = archive
+            .by_name(bundled_file)
+            .map_err(|e| format!("No se encontró '{bundled_file}' dentro del instalador de Forge: {e}"))?;
+        let mut jar_bytes = Vec::new();
+        jar_entry.read_to_end(&mut jar_bytes).map_err(|e| e.to_string())?;
+
+        let dest_inst = instance_dir.join("libraries").join(&universal_rel_path);
+        if let Some(parent) = dest_inst.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        std::fs::write(&dest_inst, &jar_bytes).map_err(|e| e.to_string())?;
+    }
+
+    // 2. Guardar versionInfo como versions/<target>/<target>.json
+    let target_id = install_obj
+        .get("target")
+        .or_else(|| version_info.get("id"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "install_profile.json legacy sin 'target'".to_string())?;
+    let version_dir = instance_dir.join("versions").join(target_id);
+    std::fs::create_dir_all(&version_dir).map_err(|e| e.to_string())?;
+    let version_json_str = serde_json::to_string_pretty(version_info).map_err(|e| e.to_string())?;
+    std::fs::write(version_dir.join(format!("{target_id}.json")), version_json_str)
+        .map_err(|e| e.to_string())?;
+
+    // 3. Descargar librerías faltantes declaradas en versionInfo.libraries
+    if let Some(libs) = version_info.get("libraries").and_then(|l| l.as_array()) {
+        for lib_val in libs {
+            let Some(name) = lib_val.get("name").and_then(|n| n.as_str()) else {
+                continue;
+            };
+            let Some((_, rel_path)) = parse_maven_coord(name) else {
+                continue;
+            };
+
+            let inst_lib = instance_dir.join("libraries").join(&rel_path);
+            let app_lib = app_data.join("libraries").join(&rel_path);
+            if inst_lib.exists() || app_lib.exists() {
+                continue;
+            }
+
+            let mut urls: Vec<String> = Vec::new();
+            if let Some(base) = lib_val.get("url").and_then(|u| u.as_str()) {
+                let clean = base.trim_end_matches('/');
+                urls.push(format!("{clean}/{rel_path}"));
+                if clean.contains("files.minecraftforge.net/maven") {
+                    urls.push(format!("https://maven.minecraftforge.net/{rel_path}"));
+                }
+            }
+            urls.push(format!("https://maven.minecraftforge.net/{rel_path}"));
+            urls.push(format!("https://libraries.minecraft.net/{rel_path}"));
+
+            for url in urls {
+                if let Ok(resp) = client
+                    .get(&url)
+                    .header(reqwest::header::USER_AGENT, LAUNCHER_USER_AGENT)
+                    .send()
+                    .await
+                {
+                    if resp.status().is_success() {
+                        if let Ok(bytes) = resp.bytes().await {
+                            if let Some(parent) = app_lib.parent() {
+                                let _ = std::fs::create_dir_all(parent);
+                            }
+                            let _ = std::fs::write(&app_lib, &bytes);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(true)
 }
 
 pub async fn prepare_and_download_all(
@@ -1668,24 +1803,30 @@ pub async fn prepare_and_download_all(
 
                 std::fs::write(&installer_jar, &inst_bytes).map_err(|e| e.to_string())?;
 
-                // Ejecutar el instalador headless de Forge en la carpeta de la instancia
-                let java_bin = find_java();
-                let output = std::process::Command::new(&java_bin)
-                    .arg("-jar")
-                    .arg(&installer_jar)
-                    .arg("--installClient")
-                    .arg(instance_dir)
-                    .current_dir(instance_dir)
-                    .output()
-                    .map_err(|e| format!("No se pudo ejecutar el instalador de Forge: {e}"))?;
+                // Si es instalador Forge legacy (<= 1.12.2), extraer manualmente porque SimpleInstaller no soporta --installClient
+                let handled_legacy =
+                    try_install_legacy_forge(&client, &installer_jar, instance_dir, app_data).await?;
 
-                if !output.status.success() {
-                    let err_msg = format!(
-                        "stdout: {} stderr: {}",
-                        String::from_utf8_lossy(&output.stdout),
-                        String::from_utf8_lossy(&output.stderr)
-                    );
-                    return Err(format!("El instalador de Forge falló: {err_msg}"));
+                if !handled_legacy {
+                    // Ejecutar el instalador headless moderno de Forge en la carpeta de la instancia
+                    let java_bin = find_java();
+                    let output = std::process::Command::new(&java_bin)
+                        .arg("-jar")
+                        .arg(&installer_jar)
+                        .arg("--installClient")
+                        .arg(instance_dir)
+                        .current_dir(instance_dir)
+                        .output()
+                        .map_err(|e| format!("No se pudo ejecutar el instalador de Forge: {e}"))?;
+
+                    if !output.status.success() {
+                        let err_msg = format!(
+                            "stdout: {} stderr: {}",
+                            String::from_utf8_lossy(&output.stdout),
+                            String::from_utf8_lossy(&output.stderr)
+                        );
+                        return Err(format!("El instalador de Forge falló: {err_msg}"));
+                    }
                 }
 
                 let _ = std::fs::write(&marker, b"installed");

@@ -25,6 +25,20 @@ Todas las modificaciones notables realizadas en este proyecto serán documentada
   - Ajuste de capa modal con `z-index: 1000` en `.modal-backdrop` para cubrir limpiamente el menú superior fijo (`top-nav`) y evitar recortes visuales.
   - Rediseño de una columna vertical a un **grid balanceado de 2 columnas horizontales** (`instance-settings-grid`), distribuyendo la configuración de RAM y Mods a la izquierda y la ficha de información con la zona de peligro a la derecha.
   - Eliminación de pie inferior redundante y reducción de alturas muertas, permitiendo que el bloque de opciones se aprecie 100% completo en pantalla sin forzar scroll interno.
+- **Control de Git (`.gitignore`)**:
+  - Agregada la exclusión de la carpeta `videos/` en `.gitignore` para evitar versionar proyectos, cachés y renders multimedia de HyperFrames dentro del repositorio del launcher.
+- **Soporte de Instaladores Forge Legacy (`src-tauri/src/downloader.rs`)**:
+  - Detección automática de instaladores Forge clásicos (`<= 1.12.2`) cuyo `SimpleInstaller` no soporta `--installClient` (`UnrecognizedOptionException`).
+  - Extracción directa del JAR universal empaquetado (`install.filePath`), generación de `versions/<target>/<target>.json` desde `versionInfo` y descarga de librerías faltantes.
+  - Soporte en `load_custom_version_json` para `minecraftArguments` (`--tweakClass`, `--versionType`) además de `arguments.game`.
+- **Tráiler Vertical para Redes Sociales (`videos/kato-trailer-social/`)**:
+  - Creación de proyecto HyperFrames (`1080x1920`, 9:16, 30 fps, 30.0s) con 6 composiciones animadas con GSAP y perspectiva 3D (`hook`, `reveal`, `loaders`, `power`, `speed`, `outro`).
+  - Generador de pista sonora y efectos sincronizados en Node.js sin dependencias externas (`scripts/compose_audio.mjs`) a 128 BPM (`assets/kato-trailer-audio.wav`).
+  - Renderizado final en MP4 (`renders/kato-trailer-social_2026-11-13_02-11-43.mp4`) con streams H.264 + AAC estéreo.
+- **Tráiler Vertical V2 Ultra Rápido (`videos/kato-trailer-v2/`)**:
+  - Nueva edición de alto impacto en español (`1080x1920`, 9:16, **60 fps**, `19.2s` a **150 BPM**) con la paleta oficial violeta/púrpura de Kato Launcher (`#1a0b36`, `#221045`, `#6B42A8`, `#cfa8ff`), mostrando la interfaz del launcher (TopNav, cuenta No-Premium, Hero de juego, tarjetas de instancias, Modrinth y configuración en 2 columnas), sin logo PNG.
+  - Generador de pista Uplifting Trance a 150 BPM en Node.js + mastering FFmpeg (`scripts/compose_audio.mjs` -> `assets/kato-v2-audio.wav`) con build-up, silencio previo de 150ms, drop con rolling bassline, supersaw estéreo de 7 voces y sidechain al kick.
+  - Renderizado final en MP4 (`renders/kato-trailer-v2_2026-11-13_02-44-47.mp4`) verificado con `hyperframes check` (0 errores).
 - **Estilos y Experiencia de Usuario (`styles.css`)**:
   - Transición del contenedor raíz `.app-shell` a un flujo vertical con degradado atmosférico de alta fidelidad.
   - Microinteracciones refinadas, hover accesible y estados deshabilitados claros.
